@@ -4,7 +4,7 @@ cd "$(dirname "$0")/.."
 python3 -m unittest discover -v -s Tests/BackendTests
 python3 -m py_compile Sources/PTNetworkStudio/Backend/*.py
 swift package dump-package >/dev/null
-swiftc -frontend -parse Sources/PTNetworkStudio/*.swift PToolsIntegration/PTNetworkStudioBridge.swift
+swiftc -frontend -parse Sources/PTNetworkStudio/*.swift
 python3 Scripts/audit-swift-source.py
 if [ "$(uname -s)" = "Darwin" ]; then
   swift test
