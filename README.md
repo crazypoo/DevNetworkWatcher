@@ -1,4 +1,4 @@
-# PTNetwork Studio — macOS 网络调试工作台（源码 1.0.2 编译修正版）
+# PTNetwork Studio / DevNetworkWatcher — macOS 网络调试工作台
 
 基于 SwiftUI/AppKit 的三栏网络检查器，HTTPS 抓包由 **mitmproxy/mitmdump** 实现；并包含 Breakpoint、Map Local、Rewrite 与 **PTools 5.69.0 实时 TLS Bridge**。独立实现 UI，不复制 Proxyman 代码、品牌、图标或受保护设计资源。macOS 14+、Swift 5.9+、Xcode 15+；运行 HTTPS 功能需要安装 mitmproxy。无付费 SDK。
 
@@ -48,32 +48,48 @@ Mac 点击 **Network** → 开启「Allow authenticated LAN proxy clients」，�
 
 规则按列表顺序执行。请求与响应的编辑仅作用于经过 mitmproxy 的流量；**不会改写由 PTools SDK Bridge 送来的只读观测记录**。对于压缩、二进制、超大、Streaming 或协议特有正文，不承诺通用文本 Rewrite 有效。该工程没有内置可执行 JavaScript 插件沙箱。
 
-## PTools 5.69.0 → Mac 实时连接
+## PTools → Mac 实时连接（统一 schema v1）
 
-**不需要为 PTools 的 `PTNetworkCaptureStore` 另做一套抓包器。** 已确认当前主分支已提供：`PTNetworkCaptureRecord.redacted()`、`PTNetworkCaptureStore.shared.records()`、`changes()` 和 `record(id:)`。Bridge 复用它们并走独立 TLS 通道。
+**已内置独立 PTools 模块，不要再复制旧 `PToolsIntegration/PTNetworkStudioBridge.swift`。** SPM 显式添加 `PooToolsDEBUG` + `PToolsDebugStudioBridge`；CocoaPods 使用 `PooTools/DEBUG_StudioBridge`。
 
-1. 在 Mac 工具栏点击 **iPhone → Start Bridge**。显示端口 `9443`、32 字节随机 token 和本机服务端证书 SHA-256 指纹。桥接监听局域网，使用自签名 TLS 证书并验证 Bearer token。
-2. 把 `PToolsIntegration/PTNetworkStudioBridge.swift` 复制到 **PTools 源码目录** `PooToolsSource/DebugNetwork/`（或运行 `sh Scripts/install-ptools-bridge.sh /你的/PTools/源码目录`）。与 PTools 5.69.0 的 `PTNetworkCaptureStore`/Record 在同一 module 内编译，不需要额外 import PTools。
-3. 你使用 **PTools 源码版**（或自己的 fork）编译 iOS App，在合适的 Debug 入口使用如下接口，填写 Mac 在 Wi-Fi 中的实际 LAN IPv4 地址及 Mac UI 显示的 token/指纹：
+1. Mac 打开 **iPhone**，输入 Mac 真实 Wi-Fi 局域网 IPv4（不要保持 `127.0.0.1`），点击 **Start Bridge**。端口 **9453**，接口 `POST /v1/events`。更换 IP 时会重新签发叶证书并更新指纹。
+2. 点击 **Reveal Development CA (.cer)**。只在授权开发设备上通过 AirDrop/Files 安装该 CA，并在 iOS **设置 → 通用 → 关于本机 → 证书信任设置** 中主动启用完全信任。此 CA 与 mitmproxy 抓包 CA 不同；PTools 必须同时通过系统 TLS 信任和叶证书 SHA-256 校验。
+3. iOS Debug App 的 Info.plist 添加 `NSLocalNetworkUsageDescription`。在开发者主动打开的 Debug 设置页，输入 Mac UI 的临时 token 和 64 位叶证书 SHA-256 指纹，不得硬编码到发布版本。
+4. 先调用 `PTDebugManager.shared.start(identifier: "network")` 启动抓包，然后使用以下 Swift API 建立只读 Bridge：
 
 ```swift
 #if DEBUG
-Task {
-    try? await PTNetworkStudioBridge.shared.start(
-        macAddress: "192.168.1.20", // 替换成自己的 Mac 局域网 IP
-        port: 9443,
-        pairingToken: "粘贴 Mac UI 当前生成的随机 Token",
-        certificateSHA256: "粘贴 Mac UI 显示的 64 位 SHA256"
+import PooToolsDEBUG
+import PToolsDebugStudioBridge
+
+@MainActor
+func connectMac(host: String, token: String, fingerprintHex: String) async throws {
+    PTDebugManager.shared.start(identifier: "network")
+    let credentials = try PTStudioPairingCredentials(
+        bearerToken: token, leafCertificateSHA256Hex: fingerprintHex
     )
+    let transport = try PTStudioHTTPSPushTransport(
+        endpoint: URL(string: "https://\(host):9453/v1/events")!,
+        credentials: credentials
+    )
+    try await PTStudioBridge.shared.start(
+        using: transport, configuration: .init(isEnabled: true)
+    )
+}
+
+@MainActor
+func disconnectMac() async {
+    await PTStudioBridge.shared.stop()
+    PTDebugManager.shared.stop(identifier: "network")
 }
 #endif
 ```
 
-4. iOS App 的 Info.plist 应包含 `NSLocalNetworkUsageDescription`，确保真机已授权本地网络访问，设备与 Mac 在同一个可达 LAN。防火墙需允许 macOS App/Python Bridge 的传入 TCP 9443。首次连接需要解锁并确认提示。
-5. 在 App 中打开 PTools DebugNetwork；随后产生的网络流量会被 SDK 读取并发送到 Mac。Mac 中会以 **PTools Live** 数据源出现，不要求客户端系统信任 mitmproxy CA，也不会修改业务请求。
-6. 调试完成，在 iOS 端调用 `await PTNetworkStudioBridge.shared.stop()`，在 Mac 点击 Stop Bridge。不要将实际 token 或指纹硬编码到发布版本；不要在 Release 中启用 Bridge。
+5. Mac 显示数据源 `PTools Live`。这是只读网络事件流；Rewrite、Map Local、Breakpoint 仅作用于经过 mitmproxy 的代理流量。
 
-Bridge 是**进程内、开发构建的只读事件传输器**，由 iOS `URLSession` 携带带证书指纹固定校验的 TLS 请求发送。它不支持直接连接未修改的 PTools 5.69.0 二进制：需要按步骤增加 SDK 源文件，或按升级计划正式纳入 PTools。
+Mac Collector 验证 Bearer token、`X-PTStudio-Nonce`、`X-PTStudio-Sent-At`、schema 版本及 eventID 去重，返回 HTTP 200 JSON ACK（`schemaVersion/sessionID/acceptedSequence`）。客户端批量发送最多 24 个事件，根据 ACK 重试。iPhone 与 Mac 需处于可互访的可信局域网，Mac 防火墙须允许 TCP 9453。
+
+**验证边界：** Python 后端真实 TLS/CA、身份校验、ACK/重试及脱敏测试不代表已完成 macOS Xcode/iOS 真机联调。仅用于开发调试；测试完成关闭 Bridge 并按需撤销开发 CA 信任。
 
 ## 其他功能与界面
 
@@ -95,7 +111,6 @@ Sources/PTNetworkStudio/
     studio_addon.py                   # 真实 HTTP/HTTPS MITM 观察、重写、断点、映射
     studio_rules.py                   # 与 mitmproxy 解耦的隐私过滤和规则原语
     bridge_server.py                 # TLS + token + 二次脱敏 iPhone 接收服务
-PToolsIntegration/PTNetworkStudioBridge.swift
 Tests/BackendTests/               # 含 TLS 桥接与 addon 生命周期测试
 Tests/PTNetworkStudioTests/
 Scripts/setup-macos.sh, build-macos.sh, verify.sh, audit-swift-source.py
@@ -115,5 +130,5 @@ sh Scripts/verify.sh
 
 - HTTPS 引擎依赖外部的 **mitmdump**，需要使用官方 mitmproxy 二进制；并非一个零依赖自研 TLS 引擎。
 - 与商业 Proxyman 的功能范围并非完全等同：不提供其专有 UI、扩展生态、自动系统代理、HTTP/3 透明捕获、完整 WebSocket Frame Inspector 或大规模生产流量性能保证。
-- Bridge 对 PTools 5.69.0 需要手动合并源文件；尚未向 GitHub 主分支提交或 PR。
+- PTools Studio Bridge 已作为独立模块提供，不需要从本仓库复制源码。
 - 来源：PTools https://github.com/crazypoo/PTools ；Proxyman 功能参考 https://github.com/ProxymanApp/Proxyman ；mitmproxy https://docs.mitmproxy.org/stable/ 。安装和随附任何外部二进制时须遵守其发布许可证。

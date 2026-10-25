@@ -1,3 +1,11 @@
+# Schema-v1 Bridge 联动验证 (2026-10-25)
+
+Mac Collector 已改为 HTTPS 9453 `POST /v1/events` 批量 JSON、token/nonce/timestamp 校验与 `PTStudioAcknowledgement` JSON ACK，采用需显式安装信任的开发根 CA 和 SAN 匹配的叶证书；新增端到端 TLS 和负例回归。下述 1.0.2 验证记录为**历史状态**，其 9443/204/旧 Adapter 描述已经过时。
+
+**剩余验证：** macOS Xcode 完整编译、iOS 17+ 真机安装 CA 与完全信任、与 PTools SPM product `PToolsDebugStudioBridge` 的真机联动和高并发/网络中断恢复。不能把 Python 测试视为 iPhone 验收。
+
+---
+
 # PTNetwork Studio 1.0.2 验证记录 — 2026-10-25
 
 当前构建环境：Linux x86_64 + Swift toolchain + Python 3 + OpenSSL；**无 macOS/Xcode/mitmdump 二进制**。

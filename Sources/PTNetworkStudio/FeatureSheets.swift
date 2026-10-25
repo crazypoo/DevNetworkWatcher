@@ -163,7 +163,7 @@ struct BridgeSetupSheet: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var bridge: StudioBridgeController
     @EnvironmentObject var store: CaptureStore
-    @State private var macIP = "192.168.1.100"
+    @State private var macIP = "127.0.0.1"
 
     var body: some View {
         VStack(alignment: .leading, spacing: 13) {
@@ -177,24 +177,31 @@ struct BridgeSetupSheet: View {
                     if bridge.isRunning { bridge.stop() }
                     else {
                         bridge.onEntry = { [weak store] entry in store?.upsert(entry) }
-                        bridge.start()
+                        bridge.onDelete = { [weak store] id in store?.removeLiveRequest(id) }
+                        bridge.onReset = { [weak store] in store?.resetLiveRequests() }
+                        bridge.start(host: macIP)
                     }
                 }
             }
             Divider()
             TextField("Mac LAN IP", text: $macIP)
                 .textFieldStyle(.roundedBorder)
-            Text("Find the Mac Wi-Fi IP under System Settings → Network. Both devices must be on the same network.")
+            Text("Replace 127.0.0.1 with the Mac Wi-Fi LAN IPv4 before connecting iPhone. Starting with another address rotates the leaf certificate and its fingerprint.")
                 .font(.caption).foregroundStyle(.secondary)
-            Text("iOS configuration (copy values into PTNetworkStudioBridge.start):")
+            Text("PToolsDebugStudioBridge configuration (schema v1):")
                 .font(.callout.weight(.medium))
             VStack(alignment: .leading, spacing: 10) {
-                parameter("macAddress", macIP)
-                parameter("port", String(bridge.port))
-                parameter("pairingToken", bridge.token)
-                parameter("certificateSHA256", bridge.fingerprint)
+                parameter("endpoint", "https://\(macIP):\(bridge.port)/v1/events")
+                parameter("bearerToken", bridge.token)
+                parameter("leafCertificateSHA256 (hex)", bridge.fingerprint)
             }.padding(15).background(.black.opacity(0.17), in: RoundedRectangle(cornerRadius: 9))
-            Text("Copy PToolsIntegration/PTNetworkStudioBridge.swift into PTools DebugNetwork. Start the bridge only in DEBUG builds. Do not embed the token in a distributed app; treat it as a secret.")
+            HStack {
+                Button("Reveal Development CA (.cer)") {
+                    NSWorkspace.shared.activateFileViewerSelecting([StudioPaths.bridge.appendingPathComponent("bridge-root-ca.cer")])
+                }.disabled(!bridge.isRunning)
+                Spacer()
+            }
+            Text("On your authorized iPhone, install the generated CA profile and explicitly enable full trust in Settings → General → About → Certificate Trust Settings. Only then will PTools pass BOTH system trust and SHA-256 pinning. Never ship the CA or pairing token in an App Store build.")
                 .font(.caption).foregroundStyle(.orange)
             if let error = bridge.error { Text(error).foregroundStyle(.red).font(.caption) }
             Spacer()
@@ -229,7 +236,7 @@ struct ProxySettingsSheet: View {
                 Text("iPhone Wi-Fi HTTP proxy: Mac LAN IP and port 9090; username studio + password above. Install and explicitly trust the mitmproxy CA on the device to see HTTPS payloads. Do not expose the listener to the Internet.")
                     .font(.caption).foregroundStyle(.orange)
             }
-            Text("By default Capture binds only to 127.0.0.1. The PTools Live Bridge uses a separate authenticated TLS listener on port 9443.")
+            Text("By default Capture binds only to 127.0.0.1. The PTools Live Bridge uses a separate authenticated TLS listener on port 9453.")
                 .font(.caption).foregroundStyle(.secondary)
             Spacer()
             HStack { Spacer(); Button("Done") { dismiss() }.keyboardShortcut(.defaultAction) }

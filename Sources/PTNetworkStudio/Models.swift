@@ -96,6 +96,14 @@ final class CaptureStore: ObservableObject {
 
     func clear() { entries.removeAll() }
 
+    func removeLiveRequest(_ id: UUID) {
+        entries.removeAll { $0.id == id && $0.source == "PTools Live" }
+    }
+
+    func resetLiveRequests() {
+        entries.removeAll { $0.source == "PTools Live" }
+    }
+
     func add(_ event: CaptureEntry) {
         entries.append(event)
         if entries.count > 1000 { entries.removeFirst(entries.count - 1000) }

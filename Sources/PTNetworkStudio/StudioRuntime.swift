@@ -220,15 +220,22 @@ final class StudioBridgeController: ObservableObject {
     @Published var token = ""
     @Published var fingerprint = ""
     @Published var error: String?
-    let port = 9443
+    let port = 9453
 
     private var process: Process?
     private var reader: StudioProcessReader?
     private var output: Pipe?
     var onEntry: ((CaptureEntry) -> Void)?
+    var onDelete: ((UUID) -> Void)?
+    var onReset: (() -> Void)?
 
-    func start() {
+    func start(host: String) {
         guard !isRunning else { return }
+        guard !host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            self.error = "Enter a reachable Mac LAN IP before starting the bridge."
+            return
+        }
+        self.error = nil
         do {
             guard let python = StudioPaths.executable(env: "PTSTUDIO_PYTHON", choices: [
                 "/usr/bin/python3", "/opt/homebrew/bin/python3", "/usr/local/bin/python3"
@@ -236,7 +243,7 @@ final class StudioBridgeController: ObservableObject {
             let script = try StudioPaths.backend("bridge_server.py")
             let p = Process()
             p.executableURL = python
-            p.arguments = [script.path, StudioPaths.bridge.path, String(port)]
+            p.arguments = [script.path, StudioPaths.bridge.path, String(port), host.trimmingCharacters(in: .whitespacesAndNewlines)]
             let pipe = Pipe()
             p.standardOutput = pipe
             p.standardError = pipe
@@ -252,6 +259,12 @@ final class StudioBridgeController: ObservableObject {
                               let data = try? JSONSerialization.data(withJSONObject: raw),
                               let entry = try? JSONDecoder().decode(CaptureEntry.self, from: data) {
                         self.onEntry?(entry)
+                    } else if message["type"] as? String == "bridgeDelete",
+                              let raw = message["requestID"] as? String,
+                              let requestID = UUID(uuidString: raw) {
+                        self.onDelete?(requestID)
+                    } else if message["type"] as? String == "bridgeReset" {
+                        self.onReset?()
                     } else if let value = message["text"] as? String { self.error = value }
                 }
             }
