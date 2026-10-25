@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+cd "$(dirname "$0")/.."
+python3 -m unittest discover -v -s Tests/BackendTests
+python3 -m py_compile Sources/PTNetworkStudio/Backend/*.py
+swift package dump-package >/dev/null
+swiftc -frontend -parse Sources/PTNetworkStudio/*.swift PToolsIntegration/PTNetworkStudioBridge.swift
+python3 Scripts/audit-swift-source.py
+if [ "$(uname -s)" = "Darwin" ]; then
+  swift test
+  sh Scripts/build-macos.sh
+else
+  echo 'macOS SwiftUI/AppKit build not performed (requires a Mac).'
+fi
