@@ -36,8 +36,18 @@ class RuleTests(unittest.TestCase):
                 pass
 
     def test_bridge_redaction(self):
-        safe = bridge_server.sanitize_entry({'id': 'x', 'method': 'POST', 'url': 'https://x/?token=secret',
-            'host': 'x', 'requestHeaders': {'Authorization':'secret'}, 'requestBody': 'not safe'})
+        event = {
+            'requestID': 'e5a57fcb-083c-4ec1-a0f9-fd805cf275de',
+            'payload': {'record': {
+                'method': 'POST', 'url': 'https://x/private?token=secret',
+                'requestHeaders': {'Authorization': 'secret'},
+                'responseHeaders': {},
+                'requestBody': {'totalBytes': 0, 'preview': None, 'redacted': True},
+                'responseBody': None, 'startedAt': '2026-10-25T00:00:00Z',
+                'status': 200
+            }}
+        }
+        safe = bridge_server.capture_entry(event)
         self.assertNotIn('secret', json.dumps(safe))
         self.assertEqual(safe['source'], 'PTools Live')
 
