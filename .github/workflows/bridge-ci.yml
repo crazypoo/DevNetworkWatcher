@@ -1,0 +1,23 @@
+name: DevNetworkWatcher Bridge CI
+on:
+  push:
+    branches: [main, "fix/studio-bridge-protocol-v1"]
+  pull_request:
+
+jobs:
+  test-macos:
+    name: macOS build + schema v1 tests
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Backend schema v1 and TLS tests
+        run: |
+          python3 -m unittest discover -v -s Tests/BackendTests
+          python3 -m py_compile Sources/PTNetworkStudio/Backend/*.py
+      - name: Native macOS SwiftPM build and tests
+        run: |
+          swift package dump-package >/dev/null
+          swiftc -frontend -parse Sources/PTNetworkStudio/*.swift
+          python3 Scripts/audit-swift-source.py
+          swift test
+          sh Scripts/build-macos.sh
