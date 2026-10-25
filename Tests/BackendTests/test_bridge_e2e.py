@@ -1,53 +1,131 @@
-"""Verify real TLS server, authorization and redacted NDJSON transport."""
-import http.client
+"""Real TLS + PToolsDebugStudioBridge schema-v1 protocol tests."""
 import hashlib
+import http.client
 import json
-import os
 from pathlib import Path
 import socket
 import ssl
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
+import uuid
 
-BACKEND = Path(__file__).resolve().parents[2] / 'Sources' / 'PTNetworkStudio' / 'Backend'
+BACKEND = Path(__file__).resolve().parents[2] / "Sources" / "PTNetworkStudio" / "Backend"
+sys.path.insert(0, str(BACKEND))
+from bridge_server import CollectorState
 
-class BridgeIntegrationTest(unittest.TestCase):
-    def test_pinned_tls_ingest(self):
-        with tempfile.TemporaryDirectory() as tmp:
+
+def sample_event(kind, sequence, session, request_id=None):
+    event = {
+        "schemaVersion": 1, "sessionID": session, "deviceID": str(uuid.uuid4()),
+        "eventID": str(uuid.uuid4()), "requestID": request_id,
+        "sequence": sequence, "monotonicTime": 17.5,
+        "wallTime": "2026-10-25T04:00:00Z", "source": "urlProtocol",
+        "kind": kind, "payload": {}
+    }
+    if kind in ("recordUpsert", "recordFinalize"):
+        event["requestID"] = event["requestID"] or str(uuid.uuid4())
+        event["payload"]["record"] = {
+            "method": "GET", "url": "https://example.com/private/path?token=raw-secret",
+            "requestHeaders": {"Authorization": "raw-secret", "X-Debug": "not-to-send"},
+            "responseHeaders": {"Set-Cookie": "raw-secret"},
+            "requestBody": {"totalBytes": 26, "preview": '{"password":"raw-secret"}',
+                            "truncated": False, "redacted": True},
+            "responseBody": None, "status": 200, "durationSeconds": 0.15,
+            "startedAt": "2026-10-25T04:00:00Z"
+        }
+    return event
+
+
+def headers(token, nonce=None, timestamp=None):
+    return {
+        "Authorization": "Bearer " + token,
+        "X-PTStudio-Nonce": nonce or str(uuid.uuid4()),
+        "X-PTStudio-Sent-At": str(timestamp if timestamp is not None else int(time.time())),
+        "Content-Type": "application/json",
+    }
+
+
+class BridgeProtocolTests(unittest.TestCase):
+    def test_batch_ack_idempotent_retry_nonce_and_privacy(self):
+        state = CollectorState("a" * 32)
+        session = str(uuid.uuid4())
+        events = [sample_event("hello", 1, session),
+                  sample_event("capabilities", 2, session),
+                  sample_event("recordFinalize", 3, session)]
+        data = json.dumps({"schemaVersion": 1, "events": events}).encode()
+        status, ack, delivered = state.receive(headers("a" * 32), data)
+        self.assertEqual(status, 200)
+        self.assertEqual(ack["acceptedSequence"], 3)
+        self.assertEqual(ack["sessionID"], session)
+        self.assertEqual(len(delivered), 1)
+        self.assertNotIn("raw-secret", json.dumps(delivered))
+        self.assertNotIn("/private/path", json.dumps(delivered))
+        self.assertEqual(delivered[0]["entry"]["source"], "PTools Live")
+
+        # Retry uses a new nonce but exactly the SAME event IDs; no second emission.
+        status, ack, delivered = state.receive(headers("a" * 32), data)
+        self.assertEqual((status, ack["acceptedSequence"], delivered), (200, 3, []))
+        nonce = str(uuid.uuid4())
+        ping = json.dumps({"schemaVersion": 1,
+                           "events": [sample_event("heartbeat", 4, session)]}).encode()
+        self.assertEqual(state.receive(headers("a" * 32, nonce), ping)[0], 200)
+        self.assertEqual(state.receive(headers("a" * 32, nonce), ping)[0], 409)
+        self.assertEqual(state.receive(headers("incorrect"), data)[0], 401)
+        self.assertEqual(state.receive(headers("a" * 32, timestamp=int(time.time()) - 500), data)[0], 401)
+        self.assertEqual(state.receive(headers("a" * 32), b'{"schemaVersion":2,"events":[]}')[0], 400)
+
+    def test_deletion_reset_and_invalid_unredacted_payload(self):
+        state = CollectorState("b" * 32)
+        session, rid = str(uuid.uuid4()), str(uuid.uuid4())
+        items = [sample_event("recordDelete", 1, session, rid),
+                 sample_event("sessionReset", 2, session)]
+        status, _, messages = state.receive(
+            headers("b" * 32), json.dumps({"schemaVersion": 1, "events": items}).encode())
+        self.assertEqual(status, 200)
+        self.assertEqual(messages[0]["requestID"], rid)
+        self.assertEqual(messages[1]["type"], "bridgeReset")
+        dangerous = sample_event("recordUpsert", 3, session)
+        dangerous["payload"]["record"]["requestBody"]["redacted"] = False
+        status, _, _ = state.receive(headers("b" * 32),
+                                      json.dumps({"schemaVersion": 1, "events": [dangerous]}).encode())
+        self.assertEqual(status, 400)
+
+    def test_trusted_ca_leaf_fingerprint_and_real_https_ack(self):
+        with tempfile.TemporaryDirectory() as folder:
             with socket.socket() as probe:
-                probe.bind(('127.0.0.1', 0))
+                probe.bind(("127.0.0.1", 0))
                 port = probe.getsockname()[1]
-            proc = subprocess.Popen([sys.executable, '-u', str(BACKEND / 'bridge_server.py'), tmp, str(port)],
-                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            proc = subprocess.Popen(
+                [sys.executable, "-u", str(BACKEND / "bridge_server.py"), folder, str(port), "127.0.0.1"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             try:
-                line = proc.stdout.readline().strip()
-                self.assertTrue(line.startswith('PTSTUDIO:'), (line, proc.poll()))
-                ready = json.loads(line.removeprefix('PTSTUDIO:'))
-                self.assertEqual(ready['type'], 'bridgeReady')
-                self.assertEqual(len(ready['fingerprint']), 64)
-                ctx = ssl._create_unverified_context()
-                connection = http.client.HTTPSConnection('127.0.0.1', port, context=ctx, timeout=3)
+                line = proc.stdout.readline()
+                self.assertTrue(line.startswith("PTSTUDIO:"), (line, proc.poll()))
+                ready = json.loads(line[len("PTSTUDIO:"):])
+                self.assertEqual(ready["port"], port)
+                root_pem = str(Path(ready["caCertificate"]).with_suffix(".pem"))
+                trusted = ssl.create_default_context(cafile=root_pem)
+                connection = http.client.HTTPSConnection("127.0.0.1", port, context=trusted, timeout=5)
                 connection.connect()
-                actual_pin = hashlib.sha256(connection.sock.getpeercert(binary_form=True)).hexdigest()
-                self.assertEqual(actual_pin, ready['fingerprint'])
-                payload = {'entry': {'id': 'fb394afa-e30c-4460-a14f-e18e7b74335d',
-                          'method': 'GET', 'url': 'https://example.com/?token=secret',
-                          'host': 'example.com', 'requestHeaders': {'Authorization': 'secret'},
-                          'requestBody': '{"password":"secret"}', 'responseBody': '{}',
-                          'startedAt': 810000000}}
-                body = json.dumps(payload).encode()
-                connection.request('POST', '/v1/capture', body=body, headers={
-                    'Authorization': 'Bearer wrong', 'Content-Type': 'application/json'})
+                pin = hashlib.sha256(connection.sock.getpeercert(binary_form=True)).hexdigest()
+                self.assertEqual(pin, ready["fingerprint"])
+                session = str(uuid.uuid4())
+                batch = json.dumps({"schemaVersion": 1,
+                                    "events": [sample_event("hello", 1, session),
+                                               sample_event("recordFinalize", 2, session)]}).encode()
+                connection.request("POST", "/v1/events", body=batch, headers=headers("incorrect"))
                 self.assertEqual(connection.getresponse().status, 401)
-                connection.request('POST', '/v1/capture', body=body, headers={
-                    'Authorization': 'Bearer ' + ready['token'], 'Content-Type': 'application/json'})
-                self.assertEqual(connection.getresponse().status, 204)
-                event = proc.stdout.readline().strip()
-                self.assertTrue(event.startswith('PTSTUDIO:'))
-                self.assertNotIn('secret', event)
-                self.assertEqual(json.loads(event.removeprefix('PTSTUDIO:'))['entry']['source'], 'PTools Live')
+                connection.request("POST", "/v1/events", body=batch, headers=headers(ready["token"]))
+                response = connection.getresponse()
+                self.assertEqual(response.status, 200)
+                self.assertEqual(json.loads(response.read())["acceptedSequence"], 2)
+                emitted = proc.stdout.readline()
+                self.assertTrue(emitted.startswith("PTSTUDIO:"), emitted)
+                self.assertNotIn("raw-secret", emitted)
+                self.assertEqual(json.loads(emitted[len("PTSTUDIO:"):])["type"], "entry")
                 connection.close()
             finally:
                 proc.terminate()
@@ -55,4 +133,6 @@ class BridgeIntegrationTest(unittest.TestCase):
                 proc.stdout.close()
                 proc.stderr.close()
 
-if __name__ == '__main__': unittest.main()
+
+if __name__ == "__main__":
+    unittest.main()
