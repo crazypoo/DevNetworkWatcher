@@ -1,3 +1,5 @@
+> **Historical planning document:** this early draft refers to the removed 9443 /v1/capture adapter. For current integration use `README.md` and `crazypoo/PTools/docs/debug/DEBUG_NETWORK_STUDIO_BRIDGE.md` (9453, `/v1/events`, ACK, development CA).
+
 # PTools 5.69.0 → PTNetwork Studio 联动升级实施计划
 
 > 基线：2026-10-25 检查 `crazypoo/PTools` 默认分支 `master`，`VERSION = 5.69.0`。本文件是**PTools 仓库尚待合并和验收的升级计划**，不是 PTools 主分支已完工清单。Mac 端 1.0 源码已包含 HTTPS MITM（mitmdump 后端）、规则/断点编辑，以及可选的 PTools 桥接样例 `PToolsIntegration/PTNetworkStudioBridge.swift`；这些源码已通过有限的 Linux 测试，但尚未经 macOS 真正构建/iPhone 集成验证，也尚未合并进 PTools。
