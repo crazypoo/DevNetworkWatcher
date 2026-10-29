@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import os
 
 struct CaptureEntry: Identifiable, Codable, Equatable {
     var id: UUID = UUID()
@@ -21,6 +22,16 @@ struct CaptureEntry: Identifiable, Codable, Equatable {
     var statusText: String { status.map(String.init) ?? (error == nil ? "…" : "ERROR") }
 }
 
+/// Immutable statistics prepared only when a batched UI snapshot is published.
+struct CaptureStatistics {
+    let httpCount: Int
+    let httpsCount: Int
+    let errorCount: Int
+    let hosts: [(name: String, count: Int)]
+    static let empty = CaptureStatistics(httpCount: 0, httpsCount: 0,
+                                         errorCount: 0, hosts: [])
+}
+
 struct StudioSession: Codable {
     var formatVersion: Int = 1
     var exportedAt: Date = .now
@@ -30,6 +41,12 @@ struct StudioSession: Codable {
 @MainActor
 final class CaptureStore: ObservableObject {
     @Published private(set) var entries: [CaptureEntry] = []
+    @Published private(set) var statistics = CaptureStatistics.empty
+    /// The source of truth is indexed by UUID, never a repeatedly copied SwiftUI array.
+    private var recordsByID: [UUID: CaptureEntry] = [:]
+    private var orderedIDs: [UUID] = []
+    private var pendingPublish: Task<Void, Never>?
+    private let signposter = OSSignposter(subsystem: "PToolsStudio", category: "CaptureStore")
     @Published private(set) var isRunning = false
     @Published var lastError: String?
     private let engine = StudioMitmEngine()
@@ -89,38 +106,96 @@ final class CaptureStore: ObservableObject {
         catch { lastError = error.localizedDescription }
     }
 
-    func upsert(_ entry: CaptureEntry) {
-        if let idx = entries.firstIndex(where: { $0.id == entry.id }) { entries[idx] = entry }
-        else { add(entry) }
+    func entry(id: UUID?) -> CaptureEntry? {
+        guard let id else { return nil }
+        return recordsByID[id]
     }
 
-    func clear() { entries.removeAll() }
+    func upsert(_ entry: CaptureEntry) {
+        if recordsByID.updateValue(entry, forKey: entry.id) == nil {
+            orderedIDs.append(entry.id)
+            if orderedIDs.count > 1000 {
+                let removed = orderedIDs.removeFirst()
+                recordsByID.removeValue(forKey: removed)
+            }
+        }
+        schedulePublish()
+    }
+
+    func clear() {
+        recordsByID.removeAll()
+        orderedIDs.removeAll()
+        publishNow()
+    }
 
     func removeLiveRequest(_ id: UUID) {
-        entries.removeAll { $0.id == id && $0.source == "PTools Live" }
+        guard recordsByID[id]?.source == "PTools Live" else { return }
+        recordsByID.removeValue(forKey: id)
+        orderedIDs.removeAll { $0 == id }
+        schedulePublish()
     }
 
     func resetLiveRequests() {
-        entries.removeAll { $0.source == "PTools Live" }
+        let dropped = Set(recordsByID.values.filter { $0.source == "PTools Live" }.map(\.id))
+        guard !dropped.isEmpty else { return }
+        for id in dropped { recordsByID.removeValue(forKey: id) }
+        orderedIDs.removeAll { dropped.contains($0) }
+        publishNow()
     }
 
-    func add(_ event: CaptureEntry) {
-        entries.append(event)
-        if entries.count > 1000 { entries.removeFirst(entries.count - 1000) }
-    }
+    func add(_ event: CaptureEntry) { upsert(event) }
 
     func finish(_ id: UUID, status: Int?, headers: [String: String], body: String, bytes: Int, error: String?, duration: TimeInterval) {
-        guard let index = entries.firstIndex(where: { $0.id == id }) else { return }
-        entries[index].status = status
-        entries[index].responseHeaders = headers
-        entries[index].responseBody = body
-        entries[index].responseSize = bytes
-        entries[index].error = error
-        entries[index].duration = duration
+        guard var entry = recordsByID[id] else { return }
+        entry.status = status
+        entry.responseHeaders = headers
+        entry.responseBody = body
+        entry.responseSize = bytes
+        entry.error = error
+        entry.duration = duration
+        recordsByID[id] = entry
+        schedulePublish()
     }
 
-    func replace(_ entries: [CaptureEntry]) {
-        self.entries = Array(entries.prefix(1000))
+    func replace(_ incoming: [CaptureEntry]) {
+        recordsByID.removeAll()
+        orderedIDs.removeAll()
+        for item in incoming.suffix(1000) {
+            if recordsByID.updateValue(item, forKey: item.id) == nil { orderedIDs.append(item.id) }
+        }
+        publishNow()
+    }
+
+    /// PR07/08: coalesce a burst of network updates into one SwiftUI invalidation.
+    /// The pending task is cancelled for clears/replacements and never owns a window.
+    private func schedulePublish() {
+        guard pendingPublish == nil else { return }
+        pendingPublish = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(75))
+            guard !Task.isCancelled else { return }
+            self?.publishNow()
+        }
+    }
+
+    private func publishNow() {
+        pendingPublish?.cancel()
+        pendingPublish = nil
+        let state = signposter.beginInterval("Publish capture snapshot")
+        let snapshot = orderedIDs.compactMap { recordsByID[$0] }
+        var domains: [String: Int] = [:]
+        var http = 0, https = 0, failures = 0
+        for entry in snapshot {
+            domains[entry.host, default: 0] += 1
+            if entry.url.hasPrefix("http://") { http += 1 }
+            if entry.url.hasPrefix("https://") { https += 1 }
+            if entry.error != nil || (entry.status ?? 0) >= 400 { failures += 1 }
+        }
+        statistics = CaptureStatistics(httpCount: http, httpsCount: https,
+            errorCount: failures,
+            hosts: domains.map { (name: $0.key, count: $0.value) }
+                          .sorted { $0.count == $1.count ? $0.name < $1.name : $0.count > $1.count })
+        entries = snapshot
+        signposter.endInterval("Publish capture snapshot", state)
     }
 
     func appendManual(_ request: URLRequest, startedAt: Date, data: Data?, response: URLResponse?, error: Error?) {
