@@ -49,6 +49,22 @@ def headers(token, nonce=None, timestamp=None):
 
 
 class BridgeProtocolTests(unittest.TestCase):
+    def test_verified_leaf_renewal_preserves_trusted_ca_and_pairing_token(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            _, _, first_token, first_pin, _ = prepare_identity(root, "macbook.local")
+            root_ca = (root / "bridge-root-ca.pem").read_bytes()
+            # Simulate a trusted Mac whose Wi-Fi address/explicit TLS host changes.
+            _, _, second_token, second_pin, _ = prepare_identity(root, "192.168.5.6")
+            self.assertEqual(root_ca, (root / "bridge-root-ca.pem").read_bytes())
+            self.assertEqual(second_token, first_token)
+            self.assertNotEqual(second_pin, first_pin)
+            verification = subprocess.run(
+                ["openssl", "verify", "-CAfile", str(root / "bridge-root-ca.pem"),
+                 str(root / "bridge-cert.pem")], capture_output=True, text=True)
+            self.assertEqual(verification.returncode, 0,
+                             verification.stdout + verification.stderr)
+
     def test_exposed_legacy_token_is_rotated_once(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
