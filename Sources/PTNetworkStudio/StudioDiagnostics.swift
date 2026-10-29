@@ -144,7 +144,9 @@ struct StudioDiagnosticsWorkspaceView: View {
                     Divider()
                     ScrollView {
                         VStack(alignment: .leading, spacing: 12) {
-                            if let message = reply?.message {
+                            if let message = reply?.message,
+                               !message.hasPrefix("fingerprint:"),
+                               !message.hasPrefix("unchanged:") {
                                 Text(message).font(.caption).foregroundStyle(.secondary)
                             }
                             if domain == "inspector" {
