@@ -52,9 +52,9 @@ Mac 点击 **Network** → 开启「Allow authenticated LAN proxy clients」，�
 
 **已内置独立 PTools 模块，不要再复制旧 `PToolsIntegration/PTNetworkStudioBridge.swift`。** SPM 显式添加 `PooToolsDEBUG` + `PToolsDebugStudioBridge`；CocoaPods 使用 `PooTools/DEBUG_StudioBridge`。
 
-1. Mac 打开 **iPhone**，输入 Mac 真实 Wi-Fi 局域网 IPv4（不要保持 `127.0.0.1`），点击 **Start Bridge**。端口 **9453**，接口 `POST /v1/events`。更换 IP 时会重新签发叶证书并更新指纹。
+1. Mac 打开 **iPhone**，优先使用预填的稳定 `.local` 主机名并点击 **Start Bridge**。端口 **9453**，接口 `POST /v1/events`。Bridge 就绪后通过 Bonjour `_ptstudio._tcp.` 广播，附带协议版本、安装 UUID 和 TLS 主机名，**不广播 Token、证书指纹或流量数据**。如改用手输 IP，IP 变动会重新签发叶证书并更新指纹。
 2. 点击 **Reveal Development CA (.cer)**。只在授权开发设备上通过 AirDrop/Files 安装该 CA，并在 iOS **设置 → 通用 → 关于本机 → 证书信任设置** 中主动启用完全信任。此 CA 与 mitmproxy 抓包 CA 不同；PTools 必须同时通过系统 TLS 信任和叶证书 SHA-256 校验。
-3. iOS Debug App 的 Info.plist 添加 `NSLocalNetworkUsageDescription`。在开发者主动打开的 Debug 设置页，输入 Mac UI 的临时 token 和 64 位叶证书 SHA-256 指纹，不得硬编码到发布版本。
+3. iOS Debug App 的 Info.plist 添加 `NSLocalNetworkUsageDescription` 和 `NSBonjourServices = [_ptstudio._tcp]`。在 Debug 设置页使用 `PTStudioAutoConnectionManager.shared.discovery.peers` 选择已发现的 Mac；首次配对输入 Studio UI 中的 Token 和 64 位叶证书 SHA-256 指纹，调用 `approvePairing(peerID:token:fingerprintHex:)` 后保存在 Keychain。Bonjour TXT 仅用于发现，绝不用于认证。
 4. 先调用 `PTDebugManager.shared.start(identifier: "network")` 启动抓包，然后使用以下 Swift API 建立只读 Bridge：
 
 ```swift
@@ -87,6 +87,14 @@ func disconnectMac() async {
 
 5. Mac 显示数据源 `PTools Live`。这是只读网络事件流；Rewrite、Map Local、Breakpoint 仅作用于经过 mitmproxy 的代理流量。
 
+### Bonjour 自动发现与已授权重连（默认关闭）
+
+Mac 的 **iPhone → Start Bridge** 成功后才发布服务；停止服务或进程退出时自动撤销广播。可勾选 **Start secure Bridge automatically when Studio opens**，此设置是明确的开发者选择，首次启动仍不会默认开启。Studio 窗口会显示最近一次通过认证的 PTools 会话时间，不公开设备身份。
+
+iOS Debug App 需要开发者明确开启一次自动连接，才调用 `PTStudioAutoConnectionManager.shared.start()` 并保存该开关；此后重新打开 App 可恢复扫描。发现 Keychain 已授权的 Studio 后自动连接，Studio 关闭、网络变更或重启后可以重新发现并重连，前后台切换调用 `refresh()`。连接依旧必须通过系统信任、SHA-256 叶证书 Pin 和 Bearer Token，未配对的广告不启动网络采集。更换 Token 或叶证书后需重新确认配对。开发者关闭自动发现时调用 `stop()`，撤销配对时调用 `revokePairing(peerID:)`。
+
+**限制：** 同一可信局域网内的 mDNS 多播必须可用；iOS 本地网络权限、Mac 防火墙 TCP 9453、开发 CA 完全信任仍需逐项确认。默认 TLS 主机名为 Mac 的 `.local` 名称，如实际 mDNS 名称不一致需在 Studio 调整。真实 iPhone/macOS end-to-end 自动发现联调尚待验证。
+
 Mac Collector 验证 Bearer token、`X-PTStudio-Nonce`、`X-PTStudio-Sent-At`、schema 版本及 eventID 去重，返回 HTTP 200 JSON ACK（`schemaVersion/sessionID/acceptedSequence`）。客户端批量发送最多 24 个事件，根据 ACK 重试。iPhone 与 Mac 需处于可互访的可信局域网，Mac 防火墙须允许 TCP 9453。
 
 **2026-10-29 配对安全修复：** PTools 示例 App 已移除随启动自动连接和硬编码的配对凭据；此版本 Collector 首次启动时废弃旧的 `bridge-token` 文件并生成 `bridge-token-v2`，旧凭据必须重新配对。之后 Token 在正常重启时保持有效；怀疑泄露时先 Stop Bridge，点击 **Rotate Pairing Token**，再 Start Bridge 获取新 Token。Bridge 按钮在 Python 初始化期间显示 Starting，只有收到 `bridgeReady` 后才表示监听成功；PTools 侧应检查 `PTStudioBridge.status().deliveryState` 是否为 `.connected`（收到 ACK），不能只检查 `isRunning`。
@@ -108,7 +116,7 @@ Mac Collector 验证 Bearer token、`X-PTStudio-Nonce`、`X-PTStudio-Sent-At`、
 Package.swift
 Sources/PTNetworkStudio/
   StudioApp.swift, StudioContentView.swift, FeatureSheets.swift, ComposerSheet.swift
-  StudioRuntime.swift, Models.swift, PrivacyFilter.swift, SessionFiles.swift
+  StudioRuntime.swift, StudioBonjourAdvertiser.swift, Models.swift, PrivacyFilter.swift, SessionFiles.swift
   Backend/
     studio_addon.py                   # 真实 HTTP/HTTPS MITM 观察、重写、断点、映射
     studio_rules.py                   # 与 mitmproxy 解耦的隐私过滤和规则原语
