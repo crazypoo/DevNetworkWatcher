@@ -5,6 +5,7 @@ import SwiftUI
 struct StudioWorkspaceView: View {
     @EnvironmentObject private var store: CaptureStore
     @StateObject private var bridge = StudioBridgeController()
+    @StateObject private var diagnostics = StudioDiagnosticStore()
     @State private var workspace: Workspace = .network
 
     enum Workspace: String, CaseIterable, Identifiable {
@@ -56,6 +57,8 @@ struct StudioWorkspaceView: View {
                 switch workspace {
                 case .network:
                     StudioContentView()
+                case .inspector:
+                    StudioInspectorView(bridge: bridge, diagnostics: diagnostics)
                 default:
                     ContentUnavailableView(
                         "\(workspace.rawValue) is not connected",
@@ -67,6 +70,11 @@ struct StudioWorkspaceView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .environmentObject(bridge)
+        .onAppear {
+            bridge.onDiagnosticReply = { [weak diagnostics] reply in
+                diagnostics?.receive(reply)
+            }
+        }
         .onDisappear {
             store.stop()
             bridge.stop()
