@@ -2,7 +2,7 @@ import Foundation
 import Combine
 import os
 
-struct CaptureEntry: Identifiable, Codable, Equatable {
+struct CaptureEntry: Identifiable, Codable, Equatable, Sendable {
     var id: UUID = UUID()
     var startedAt: Date = .now
     var method: String
@@ -59,7 +59,13 @@ final class CaptureStore: ObservableObject {
         guard !isRunning else { return }
         do {
             try engine.start(port: port, exposeToLAN: exposeToLAN, proxyPassword: proxyPassword) { [weak self] message in
-                Task { @MainActor in self?.handleMessage(message) }
+                // Decode JSON outside MainActor: only value snapshots reach the UI.
+                let entry: CaptureEntry? = {
+                    guard let raw = message["entry"],
+                          let data = try? JSONSerialization.data(withJSONObject: raw) else { return nil }
+                    return try? JSONDecoder().decode(CaptureEntry.self, from: data)
+                }()
+                Task { @MainActor in self?.handleMessage(message, parsedEntry: entry) }
             }
             isRunning = true
             lastError = nil
@@ -72,7 +78,7 @@ final class CaptureStore: ObservableObject {
         paused.removeAll()
     }
 
-    private func handleMessage(_ message: [String: Any]) {
+    private func handleMessage(_ message: [String: Any], parsedEntry: CaptureEntry?) {
         let type = message["type"] as? String ?? ""
         if type == "notice" {
             if let text = message["text"] as? String { lastError = text }
@@ -92,9 +98,7 @@ final class CaptureStore: ObservableObject {
             paused.removeValue(forKey: id)
             return
         }
-        if let object = message["entry"],
-           let data = try? JSONSerialization.data(withJSONObject: object),
-           let entry = try? JSONDecoder().decode(CaptureEntry.self, from: data) {
+        if let entry = parsedEntry {
             upsert(entry)
             if type == "paused", let phase = message["phase"] as? String { paused[entry.id] = phase }
         }
