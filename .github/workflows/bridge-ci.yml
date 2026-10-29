@@ -3,17 +3,32 @@ on:
   push:
     branches: [main, "fix/studio-bridge-protocol-v1"]
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: studio-bridge-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test-macos:
     name: macOS build + schema v1 tests
     runs-on: macos-15
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - name: Backend schema v1 and TLS tests
         run: |
           python3 -m unittest discover -v -s Tests/BackendTests
           python3 -m py_compile Sources/PTNetworkStudio/Backend/*.py
+      - name: Diagnostic JSON processing baseline (non-gating)
+        run: |
+          python3 Scripts/bench-diagnostics.py > diagnostics-baseline.json
+          cat diagnostics-baseline.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: studio-diagnostics-benchmark
+          path: diagnostics-baseline.json
+          retention-days: 14
       - name: Native macOS SwiftPM build and tests
         run: |
           swift package dump-package >/dev/null
