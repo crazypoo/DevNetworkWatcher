@@ -25,10 +25,10 @@ MAX_ENTRIES = 1200
 
 # Defense-in-depth redaction, including free-form log text and file names.
 # UI view hierarchy names are preserved, but credentials are never exported.
-BEARER = re.compile(r"(?i)\\b(bearer\\s+)[a-z0-9._~+/-]+")
-KEY_VALUE = re.compile(r"(?i)\\b(token|password|secret|api[_-]?key|authorization)\\s*[:=]\\s*[^\\s&,;]+")
-EMAIL = re.compile(r"(?i)[a-z0-9._%+-]+@[a-z0-9.-]+\\.[a-z]{2,}")
-QUERY = re.compile(r"(?i)(https?://[^\\s?#]+)\\?[^\\s#]+")
+BEARER = re.compile(r"(?i)\b(bearer\s+)[a-z0-9._~+/-]+")
+KEY_VALUE = re.compile(r"(?i)\b(token|password|secret|api[_-]?key|authorization)\s*[:=]\s*[^\s&,;]+")
+EMAIL = re.compile(r"(?i)[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}")
+QUERY = re.compile(r"(?i)(https?://[^\s?#]+)\?[^\s#]+")
 
 
 def redact_text(value):
