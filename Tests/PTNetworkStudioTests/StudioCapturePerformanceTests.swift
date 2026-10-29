@@ -1,4 +1,5 @@
 import XCTest
+import Combine
 @testable import PTNetworkStudio
 
 @MainActor
@@ -38,6 +39,25 @@ final class StudioCapturePerformanceTests: XCTestCase {
         store.clear()
         XCTAssertTrue(store.entries.isEmpty)
         XCTAssertTrue(store.statistics.hosts.isEmpty)
+    }
+
+    func testBurstPublishesOneCaptureSnapshotWithMatchingStatistics() async throws {
+        let store = CaptureStore()
+        var publishedSnapshots = 0
+        let subscription = store.$entries.dropFirst().sink { snapshot in
+            publishedSnapshots += 1
+            XCTAssertEqual(store.statistics.httpsCount, snapshot.count)
+        }
+        for index in 0..<500 {
+            store.add(CaptureEntry(method: "GET",
+                url: "https://server\(index % 5).example/api",
+                host: "server\(index % 5).example"))
+        }
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(publishedSnapshots, 1)
+        XCTAssertEqual(store.entries.count, 500)
+        XCTAssertEqual(store.statistics.hosts.reduce(0) { $0 + $1.count }, 500)
+        withExtendedLifetime(subscription) {}
     }
 
     func testClearCancelsPendingBatchWithoutGhostRows() async throws {
