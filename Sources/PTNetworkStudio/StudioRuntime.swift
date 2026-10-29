@@ -278,22 +278,24 @@ final class StudioBridgeController: ObservableObject {
                 }
             }
             reader.attach(pipe)
-            try p.run()
             self.reader = reader
             self.output = pipe
             self.process = p
             self.runID = launchedRunID
+            // Register before run(): a fast Python exit (bad IP/occupied port)
+            // must not leave the UI stuck in Starting.
             p.terminationHandler = { [weak self] ended in
+                let exitCode = Int(ended.terminationStatus)
                 Task { @MainActor in
                     guard let self, self.runID == launchedRunID else { return }
                     self.stop()
-                    self.error = "Bridge exited (code \(ended.terminationStatus)). Check TCP 9453, the Mac firewall, Python and the configured LAN IP."
+                    self.error = "Bridge exited (code \(exitCode)). Check TCP 9453, the Mac firewall, Python and the configured LAN IP."
                 }
             }
+            try p.run()
         } catch {
+            stop()
             self.error = error.localizedDescription
-            self.isStarting = false
-            self.isRunning = false
         }
     }
 
