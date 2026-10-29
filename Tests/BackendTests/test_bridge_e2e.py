@@ -120,6 +120,14 @@ class BridgeProtocolTests(unittest.TestCase):
                 ready = json.loads(line[len("PTSTUDIO:"):])
                 self.assertEqual(ready["port"], port)
                 root_pem = str(Path(ready["caCertificate"]).with_suffix(".pem"))
+                # Diagnose certificate-chain incompatibilities on macOS Python,
+                # rather than treating a TLS handshake failure as an ACK bug.
+                verification = subprocess.run(
+                    ["openssl", "verify", "-CAfile", root_pem,
+                     str(Path(folder) / "bridge-cert.pem")],
+                    capture_output=True, text=True)
+                self.assertEqual(verification.returncode, 0,
+                                 verification.stdout + verification.stderr)
                 trusted = ssl.create_default_context(cafile=root_pem)
                 connection = http.client.HTTPSConnection("127.0.0.1", port, context=trusted, timeout=5)
                 connection.connect()
