@@ -27,6 +27,7 @@ struct StudioContentView: View {
     @State private var showBreakpoint = false
     @StateObject private var ruleStore = StudioRuleStore()
     @StateObject private var bridge = StudioBridgeController()
+    @AppStorage("PTStudio.autoStartBridge") private var autoStartBridge = false
 
     private var hosts: [HostCount] {
         let groups = Dictionary(grouping: store.entries, by: \.host)
@@ -104,6 +105,15 @@ struct StudioContentView: View {
                     NSWorkspace.shared.activateFileViewerSelecting([StudioPaths.certificates.appendingPathComponent("mitmproxy-ca-cert.pem")])
                 } label: { Label("CA", systemImage: "checkmark.shield") }
                 Button { showGuide = true } label: { Label("Setup", systemImage: "questionmark.circle") }
+            }
+        }
+        .onAppear {
+            if autoStartBridge {
+                bridge.onEntry = { [weak store] entry in store?.upsert(entry) }
+                bridge.onDelete = { [weak store] id in store?.removeLiveRequest(id) }
+                bridge.onReset = { [weak store] in store?.resetLiveRequests() }
+                bridge.start(host: UserDefaults.standard.string(forKey: "PTStudio.bridgeHost")
+                    ?? StudioBonjourAdvertiser.defaultHost)
             }
         }
         .onDisappear {

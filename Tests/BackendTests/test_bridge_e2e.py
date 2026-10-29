@@ -73,10 +73,11 @@ class BridgeProtocolTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(ack["acceptedSequence"], 3)
         self.assertEqual(ack["sessionID"], session)
-        self.assertEqual(len(delivered), 1)
+        self.assertEqual(len(delivered), 2)
+        self.assertEqual(delivered[0], {"type": "bridgePeer"})
         self.assertNotIn("raw-secret", json.dumps(delivered))
         self.assertNotIn("/private/path", json.dumps(delivered))
-        self.assertEqual(delivered[0]["entry"]["source"], "PTools Live")
+        self.assertEqual(delivered[1]["entry"]["source"], "PTools Live")
 
         # Retry uses a new nonce but exactly the SAME event IDs; no second emission.
         status, ack, delivered = state.receive(headers("a" * 32), data)
@@ -143,6 +144,9 @@ class BridgeProtocolTests(unittest.TestCase):
                 response = connection.getresponse()
                 self.assertEqual(response.status, 200)
                 self.assertEqual(json.loads(response.read())["acceptedSequence"], 2)
+                peer_notice = proc.stdout.readline()
+                self.assertEqual(json.loads(peer_notice[len("PTSTUDIO:"):]),
+                                 {"type": "bridgePeer"})
                 emitted = proc.stdout.readline()
                 self.assertTrue(emitted.startswith("PTSTUDIO:"), emitted)
                 self.assertNotIn("raw-secret", emitted)
