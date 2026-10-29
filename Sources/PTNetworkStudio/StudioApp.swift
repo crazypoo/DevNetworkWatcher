@@ -5,8 +5,8 @@ struct PTNetworkStudioApp: App {
     @StateObject private var store = CaptureStore()
 
     var body: some Scene {
-        WindowGroup("PTNetwork Studio") {
-            StudioContentView()
+        WindowGroup("PTools Studio") {
+            StudioWorkspaceView()
                 .environmentObject(store)
                 .frame(minWidth: 1080, minHeight: 650)
                 .preferredColorScheme(.dark)

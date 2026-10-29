@@ -26,7 +26,7 @@ struct StudioContentView: View {
     @State private var showProxySettings = false
     @State private var showBreakpoint = false
     @StateObject private var ruleStore = StudioRuleStore()
-    @StateObject private var bridge = StudioBridgeController()
+    @EnvironmentObject private var bridge: StudioBridgeController
     @AppStorage("PTStudio.autoStartBridge") private var autoStartBridge = false
 
     private func liveSessionCount(at time: Date) -> Int {
@@ -127,10 +127,6 @@ struct StudioContentView: View {
                 bridge.start(host: UserDefaults.standard.string(forKey: "PTStudio.bridgeHost")
                     ?? StudioBonjourAdvertiser.defaultHost)
             }
-        }
-        .onDisappear {
-            store.stop()
-            bridge.stop()
         }
         .sheet(isPresented: $showComposer) { ComposerSheet().environmentObject(store) }
         .sheet(isPresented: $showGuide) { SetupGuide() }
