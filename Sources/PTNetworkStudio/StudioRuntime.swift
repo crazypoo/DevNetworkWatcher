@@ -314,7 +314,17 @@ final class StudioBridgeController: ObservableObject {
                               reply.schemaVersion == 2,
                               let pending = self.pendingDiagnosticDomains.removeValue(forKey: reply.id),
                               self.authenticatedSessions[reply.sessionID] != nil {
-                        self.diagnosticResults[pending.domain] = reply
+                        // Highlight/edit/undo return an acknowledgement without a new tree.
+                        // Preserve the previous snapshot until the user selects Refresh.
+                        if reply.entries.isEmpty,
+                           let previous = self.diagnosticResults[pending.domain] {
+                            self.diagnosticResults[pending.domain] = StudioDiagnosticReply(
+                                schemaVersion: reply.schemaVersion, id: reply.id,
+                                sessionID: reply.sessionID, success: reply.success,
+                                message: reply.message, entries: previous.entries)
+                        } else {
+                            self.diagnosticResults[pending.domain] = reply
+                        }
                         self.diagnosticRevision += 1
                     } else if message["type"] as? String == "diagnosticRejected" {
                         self.error = message["reason"] as? String ?? "Diagnostic request refused"
