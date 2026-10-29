@@ -202,7 +202,7 @@ struct StudioContentView: View {
                     Text("PTools events: \(bridge.receivedBridgeEntries)")
                         .foregroundStyle(.secondary)
                     if let last = bridge.lastAuthenticatedPeerAt {
-                        Text("Last ACK session: \(last.formatted(date: .omitted, time: .standard))")
+                        Text("Last authenticated: \(last.formatted(date: .omitted, time: .standard))")
                             .foregroundStyle(.secondary)
                     }
                     if let error = bridge.error {
