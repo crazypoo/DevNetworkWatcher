@@ -6,6 +6,8 @@ struct StudioInspectorView: View {
     @ObservedObject var bridge: StudioBridgeController
     @ObservedObject var diagnostics: StudioDiagnosticStore
     @State private var selectedID: String?
+    @State private var previewMode = "Tree"
+    @State private var archiveError: String?
     @State private var editKey = "alpha"
     @State private var editValue = "1.0"
 
@@ -13,7 +15,14 @@ struct StudioInspectorView: View {
         VStack(spacing: 0) {
             HStack {
                 Text("Inspector").font(.title2.bold())
+                Picker("Preview", selection: $previewMode) {
+                    ForEach(["Tree", "2D", "3D"], id: \.self) { Text($0) }
+                }.labelsHidden().pickerStyle(.segmented).frame(width: 180)
                 Spacer()
+                Button("Export Snapshot…") {
+                    do { try StudioInspectorArchives.export(diagnostics.inspector) }
+                    catch { archiveError = "Could not export the snapshot" }
+                }.disabled(diagnostics.inspector.isEmpty)
                 Text(bridge.diagnosticSessions.isEmpty ? "No Agent" : "Agent Connected")
                     .foregroundStyle(bridge.diagnosticSessions.isEmpty ? .secondary : .green)
                 Button("Refresh Hierarchy") {
@@ -30,6 +39,12 @@ struct StudioInspectorView: View {
                 )
             } else {
                 HStack(spacing: 0) {
+                    Group {
+                    if previewMode == "2D" {
+                        StudioHierarchy2DView(nodes: diagnostics.inspector, selectedID: selectedID)
+                    } else if previewMode == "3D" {
+                        StudioHierarchy3DView(nodes: diagnostics.inspector, selectedID: selectedID)
+                    } else {
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 3) {
                             ForEach(diagnostics.inspector) { node in
@@ -48,6 +63,8 @@ struct StudioInspectorView: View {
                                 .buttonStyle(.plain)
                             }
                         }.padding(8)
+                    }
+                    }
                     }.frame(minWidth: 260, maxWidth: .infinity)
                     Divider()
                     if let selected = diagnostics.inspector.first(where: { $0.id == selectedID }) {
@@ -103,6 +120,10 @@ struct StudioInspectorView: View {
                         Text("Select a view").frame(width: 330)
                     }
                 }
+            }
+            Text(diagnostics.diffSummary).font(.caption2).foregroundStyle(.secondary)
+            if let archiveError {
+                Text(archiveError).font(.caption).foregroundStyle(.red)
             }
             if let error = diagnostics.lastError {
                 Text(error).font(.caption).foregroundStyle(.red).padding(8)

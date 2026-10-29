@@ -18,14 +18,14 @@ struct StudioDiagnosticCommand: Encodable {
     }
 }
 
-struct StudioDiagnosticRect: Decodable, Equatable {
+struct StudioDiagnosticRect: Codable, Equatable {
     let x: Double
     let y: Double
     let width: Double
     let height: Double
 }
 
-struct StudioDiagnosticEntry: Identifiable, Decodable, Equatable {
+struct StudioDiagnosticEntry: Identifiable, Codable, Equatable {
     let id: String
     let parentID: String?
     let kind: String
@@ -48,6 +48,8 @@ struct StudioDiagnosticReply: Decodable {
 @MainActor
 final class StudioDiagnosticStore: ObservableObject {
     @Published private(set) var inspector: [StudioDiagnosticEntry] = []
+    @Published private(set) var previousInspector: [StudioDiagnosticEntry] = []
+    @Published private(set) var diffSummary = "Capture two snapshots to compare"
     @Published private(set) var lastError: String?
     @Published private(set) var lastAction: String?
     @Published private(set) var lastUndoID: String?
@@ -76,7 +78,21 @@ final class StudioDiagnosticStore: ObservableObject {
         guard reply.schemaVersion == 2, let action = pending.removeValue(forKey: reply.id) else { return }
         if reply.success {
             latest[action] = reply.entries
-            if action == "inspector.snapshot" { inspector = reply.entries }
+            if action == "inspector.snapshot" {
+                if !inspector.isEmpty {
+                    previousInspector = inspector
+                    let old = Dictionary(uniqueKeysWithValues: inspector.map { ($0.id, $0) })
+                    let new = Dictionary(uniqueKeysWithValues: reply.entries.map { ($0.id, $0) })
+                    let added = new.keys.filter { old[$0] == nil }.count
+                    let removed = old.keys.filter { new[$0] == nil }.count
+                    let changed = new.filter { key, node in
+                        guard let previous = old[key] else { return false }
+                        return previous != node
+                    }.count
+                    diffSummary = "\(added) added · \(removed) removed · \(changed) changed"
+                }
+                inspector = reply.entries
+            }
             if action == "inspector.setProperty" { lastUndoID = reply.id.uuidString }
             if action == "inspector.revert" { lastUndoID = nil }
             if action.hasPrefix("inspector."), action != "inspector.snapshot" {
