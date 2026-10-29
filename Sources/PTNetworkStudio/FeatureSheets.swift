@@ -163,7 +163,9 @@ struct BridgeSetupSheet: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var bridge: StudioBridgeController
     @EnvironmentObject var store: CaptureStore
-    @State private var macIP = "127.0.0.1"
+    @AppStorage("PTStudio.autoStartBridge") private var autoStartBridge = false
+    @State private var macIP = UserDefaults.standard.string(forKey: "PTStudio.bridgeHost")
+        ?? StudioBonjourAdvertiser.defaultHost
 
     var body: some View {
         VStack(alignment: .leading, spacing: 13) {
@@ -179,16 +181,25 @@ struct BridgeSetupSheet: View {
                         bridge.onEntry = { [weak store] entry in store?.upsert(entry) }
                         bridge.onDelete = { [weak store] id in store?.removeLiveRequest(id) }
                         bridge.onReset = { [weak store] in store?.resetLiveRequests() }
+                        UserDefaults.standard.set(macIP, forKey: "PTStudio.bridgeHost")
                         bridge.start(host: macIP)
                     }
                 }
                 .disabled(bridge.isStarting)
             }
             Divider()
-            TextField("Mac LAN IP", text: $macIP)
+            Toggle("Start secure Bridge automatically when Studio opens", isOn: $autoStartBridge)
+            TextField("TLS hostname (.local preferred), or manual LAN IP", text: $macIP)
                 .textFieldStyle(.roundedBorder)
-            Text("Replace 127.0.0.1 with the Mac Wi-Fi LAN IPv4 before connecting iPhone. Starting with another address rotates the leaf certificate and its fingerprint.")
+                .disabled(bridge.isRunning || bridge.isStarting)
+            Text("Bonjour advertises _ptstudio._tcp on local Wi-Fi after the TLS collector is ready. Use the Mac's stable .local hostname for automatic reconnection across IP changes; a hostname change renews the leaf pin and requires re-pairing.")
                 .font(.caption).foregroundStyle(.secondary)
+            Text("Bonjour ID: \(StudioBonjourAdvertiser.installationID) (public, not a secret)")
+                .font(.caption.monospaced()).foregroundStyle(.secondary)
+            if let lastPeer = bridge.lastAuthenticatedPeerAt {
+                Text("Last authenticated PTools session: \(lastPeer.formatted())")
+                    .font(.caption).foregroundStyle(.green)
+            }
             Text("PToolsDebugStudioBridge configuration (schema v1):")
                 .font(.callout.weight(.medium))
             VStack(alignment: .leading, spacing: 10) {
@@ -211,7 +222,7 @@ struct BridgeSetupSheet: View {
             if let error = bridge.error { Text(error).foregroundStyle(.red).font(.caption) }
             Spacer()
             HStack { Spacer(); Button("Done") { dismiss() }.keyboardShortcut(.defaultAction) }
-        }.padding(23).frame(width: 680, height: 520)
+        }.padding(23).frame(width: 680, height: 640)
     }
     private func parameter(_ key: String, _ value: String) -> some View {
         HStack(alignment: .firstTextBaseline) {
