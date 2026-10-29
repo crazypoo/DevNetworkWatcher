@@ -125,11 +125,11 @@ struct StudioDiagnosticsWorkspaceView: View {
                                         Text("x: \(Int(frame.x)), y: \(Int(frame.y)), w: \(Int(frame.width)), h: \(Int(frame.height))")
                                             .font(.system(.caption, design: .monospaced))
                                     }
-                                    ForEach(entry.attributes.sorted(by: { $0.key < $1.key }), id: \.key) { pair in
+                                    ForEach(entry.attributes.keys.sorted(), id: \.self) { key in
                                         HStack {
-                                            Text(pair.key).foregroundStyle(.secondary)
+                                            Text(key).foregroundStyle(.secondary)
                                             Spacer()
-                                            Text(pair.value).textSelection(.enabled)
+                                            Text(entry.attributes[key] ?? "").textSelection(.enabled)
                                         }.font(.caption)
                                     }
                                     if let preview = entry.previewBase64,
@@ -160,8 +160,8 @@ struct StudioDiagnosticsWorkspaceView: View {
                                 if let entry = selected {
                                     Text(entry.name).font(.headline)
                                     Text(entry.detail ?? "").textSelection(.enabled)
-                                    ForEach(entry.attributes.sorted(by: { $0.key < $1.key }), id: \.key) { item in
-                                        HStack { Text(item.key); Spacer(); Text(item.value) }
+                                    ForEach(entry.attributes.keys.sorted(), id: \.self) { key in
+                                        HStack { Text(key); Spacer(); Text(entry.attributes[key] ?? "") }
                                             .font(.caption)
                                     }
                                 } else {
