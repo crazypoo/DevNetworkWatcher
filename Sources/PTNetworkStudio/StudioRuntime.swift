@@ -220,6 +220,8 @@ final class StudioBridgeController: ObservableObject {
     @Published var isRunning = false
     @Published var token = ""
     @Published var fingerprint = ""
+    @Published private(set) var tlsHost = ""
+    @Published private(set) var lastAuthenticatedPeerAt: Date?
     @Published var error: String?
     let port = 9453
 
@@ -227,6 +229,7 @@ final class StudioBridgeController: ObservableObject {
     private var reader: StudioProcessReader?
     private var output: Pipe?
     private var runID: UUID?
+    private var advertiser: StudioBonjourAdvertiser?
     var onEntry: ((CaptureEntry) -> Void)?
     var onDelete: ((UUID) -> Void)?
     var onReset: (() -> Void)?
@@ -261,8 +264,18 @@ final class StudioBridgeController: ObservableObject {
                     if let type = message["type"] as? String, type == "bridgeReady" {
                         self.token = message["token"] as? String ?? ""
                         self.fingerprint = message["fingerprint"] as? String ?? ""
+                        self.tlsHost = message["host"] as? String ?? ""
                         self.isStarting = false
                         self.isRunning = true
+                        let advertiser = StudioBonjourAdvertiser(port: self.port, tlsHost: self.tlsHost)
+                        advertiser.onFailure = { [weak self] reason in
+                            self?.error = reason
+                        }
+                        self.advertiser = advertiser
+                        advertiser.start()
+                    } else if message["type"] as? String == "bridgePeer" {
+                        // Emitted only after a successful authenticated hello batch.
+                        self.lastAuthenticatedPeerAt = Date()
                     } else if let type = message["type"] as? String, type == "entry",
                               let raw = message["entry"],
                               let data = try? JSONSerialization.data(withJSONObject: raw),
@@ -303,6 +316,8 @@ final class StudioBridgeController: ObservableObject {
         // Invalidate the run first so late stdout/termination callbacks cannot
         // restart or overwrite the state of a new bridge instance.
         runID = nil
+        advertiser?.stop()
+        advertiser = nil
         if let p = process, p.isRunning { p.terminate() }
         output?.fileHandleForReading.readabilityHandler = nil
         output = nil
@@ -312,6 +327,8 @@ final class StudioBridgeController: ObservableObject {
         isRunning = false
         token = ""
         fingerprint = ""
+        tlsHost = ""
+        lastAuthenticatedPeerAt = nil
     }
 
     /// Revoke a leaked or stale pairing token while no collector is listening.
