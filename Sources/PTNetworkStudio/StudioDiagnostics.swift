@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 
 // The schema-v2 contract mirrors the Foundation-only PToolsStudioProtocolCore.
 // It intentionally lives outside Network schema v1 and cannot alter proxy traffic.
@@ -129,6 +130,13 @@ struct StudioDiagnosticsWorkspaceView: View {
                                             Text(pair.value).textSelection(.enabled)
                                         }.font(.caption)
                                     }
+                                    if let preview = entry.previewBase64,
+                                       let bytes = Data(base64Encoded: preview),
+                                       let image = NSImage(data: bytes) {
+                                        Image(nsImage: image).resizable().scaledToFit()
+                                            .frame(maxHeight: 260)
+                                            .accessibilityLabel("Explicitly authorized on-device screen preview")
+                                    }
                                     HStack {
                                         Button("Highlight") { request("highlight", target: entry.id) }
                                         Button("Hide") { request("setHidden", target: entry.id, args: ["value": "true"]) }
@@ -222,8 +230,6 @@ struct StudioDiagnosticsWorkspaceView: View {
         panel.nameFieldStringValue = "PTools-\(targetDomain)-snapshot.json"
         if panel.runModal() == .OK, let url = panel.url {
             do {
-                let encoder = JSONEncoder()
-                encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
                 // Export only sanitized entries received from the authenticated Bridge.
                 let data = try JSONSerialization.data(withJSONObject: [
                     "schemaVersion": 2, "domain": targetDomain,
