@@ -64,6 +64,11 @@ struct StudioDiagnosticsWorkspaceView: View {
     @State private var treeRows: [StudioHierarchyRow] = []
     @State private var collapsedIDs: Set<String> = []
     @State private var decodedPreview: NSImage?
+    @State private var previewCache = NSCache<NSString, NSImage>()
+    @State private var perspectiveEntries: [StudioDiagnosticEntry] = []
+    @State private var lastIndexedReplyID: UUID?
+    @State private var lastIndexedSessionID: UUID?
+    @State private var lastIndexedFingerprint: String?
 
     private var targetDomain: String {
         domain == "storage" ? storageArea : domain == "console" ? "logging" : domain
@@ -217,28 +222,18 @@ struct StudioDiagnosticsWorkspaceView: View {
             }.font(.caption2).foregroundStyle(.secondary)
         }
         .padding(18)
-        .onAppear { rebuildIndex() }
-        .onChange(of: bridge.diagnosticRevision) { _ in
-            if let data = reply {
-                presentIDs = Set(data.entries.map(\.id))
-                lastMessage = data.success ? nil : data.message ?? "Diagnostic command rejected"
-            }
-            rebuildIndex()
-        }
+        .onAppear { applyDiagnosticReply() }
+        .onChange(of: bridge.diagnosticRevision) { _ in applyDiagnosticReply() }
         .onChange(of: selectedID) { _ in updatePreview() }
-        .onChange(of: storageArea) { _ in
-            selectedID = nil
-            presentIDs = []
-            previousIDs = []
-            rebuildIndex()
-        }
+        .onChange(of: storageArea) { _ in resetDomainState(); applyDiagnosticReply() }
+        .onChange(of: domain) { _ in resetDomainState(); applyDiagnosticReply() }
     }
 
     // Overview derived only from the actual view coordinates, not arbitrary script execution.
     private var perspective: some View {
         ZStack(alignment: .topLeading) {
             RoundedRectangle(cornerRadius: 8).fill(.gray.opacity(0.10))
-            ForEach(entries.filter { $0.frame != nil }.prefix(70)) { entry in
+            ForEach(perspectiveEntries) { entry in
                 if let rect = entry.frame {
                     RoundedRectangle(cornerRadius: 2)
                         .stroke(.blue.opacity(0.6), lineWidth: 1)
@@ -254,7 +249,54 @@ struct StudioDiagnosticsWorkspaceView: View {
         .accessibilityLabel("View hierarchy perspective preview")
     }
 
+    private func resetDomainState() {
+        selectedID = nil
+        previousIDs = []
+        presentIDs = []
+        indexedEntries = [:]
+        children = [:]
+        treeRows = []
+        perspectiveEntries = []
+        lastIndexedReplyID = nil
+        lastIndexedFingerprint = nil
+        lastIndexedSessionID = nil
+        decodedPreview = nil
+        previewCache.removeAllObjects()
+    }
+
+    /// Other workspaces and edit acknowledgements must not rebuild a 900-node
+    /// Inspector tree or decode a preview again.
+    private func applyDiagnosticReply() {
+        guard let data = reply else {
+            if lastIndexedReplyID != nil { resetDomainState() }
+            return
+        }
+        guard data.id != lastIndexedReplyID else { return }
+        if let previous = lastIndexedSessionID, previous != data.sessionID {
+            resetDomainState()
+        }
+        lastIndexedSessionID = data.sessionID
+        lastIndexedReplyID = data.id
+        lastMessage = data.success ? nil : (data.message ?? "Diagnostic command rejected")
+        let message = data.message ?? ""
+        if message.hasPrefix("unchanged:") ||
+           message == "Highlighted" || message == "Restored" ||
+           message == "Applied (Debug only)" {
+            return
+        }
+        if message.hasPrefix("fingerprint:"),
+           lastIndexedFingerprint == String(message.dropFirst("fingerprint:".count)) {
+            return
+        }
+        if message.hasPrefix("fingerprint:") {
+            lastIndexedFingerprint = String(message.dropFirst("fingerprint:".count))
+        }
+        presentIDs = Set(data.entries.map(\.id))
+        rebuildIndex()
+    }
+
     private func rebuildIndex() {
+        perspectiveEntries = Array(entries.lazy.filter { $0.frame != nil }.prefix(70))
         indexedEntries = Dictionary(entries.map { ($0.id, $0) },
                                     uniquingKeysWith: { first, _ in first })
         var next: [String: [String]] = [:]
@@ -289,13 +331,25 @@ struct StudioDiagnosticsWorkspaceView: View {
     }
 
     private func updatePreview() {
-        guard let preview = selected?.previewBase64, preview.count <= 320_000,
-              let bytes = Data(base64Encoded: preview) else {
+        guard let entry = selected, let preview = entry.previewBase64,
+              preview.count <= 320_000 else {
             decodedPreview = nil
             return
         }
-        // Decode at most once per selection/snapshot, never during body evaluation.
-        decodedPreview = NSImage(data: bytes)
+        previewCache.countLimit = 12
+        previewCache.totalCostLimit = 12 * 1024 * 1024
+        let key = NSString(string: "\(lastIndexedSessionID?.uuidString ?? ""):\(entry.id):\(preview.hashValue)")
+        if let cached = previewCache.object(forKey: key) {
+            decodedPreview = cached
+            return
+        }
+        guard let bytes = Data(base64Encoded: preview),
+              let image = NSImage(data: bytes) else {
+            decodedPreview = nil
+            return
+        }
+        previewCache.setObject(image, forKey: key, cost: bytes.count)
+        decodedPreview = image
     }
 
     private func request(_ operation: String, target: String? = nil, args: [String: String] = [:]) {
