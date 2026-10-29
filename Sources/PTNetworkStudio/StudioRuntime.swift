@@ -226,6 +226,10 @@ final class StudioBridgeController: ObservableObject {
     @Published private(set) var authenticatedSessions: [UUID: Date] = [:]
     @Published private(set) var receivedBridgeEntries = 0
     @Published var error: String?
+    @Published private(set) var diagnosticResults: [String: StudioDiagnosticReply] = [:]
+    @Published private(set) var diagnosticRevision = 0
+    private var pendingDiagnosticDomains: [UUID: (domain: String, created: Date)] = [:]
+    private var input: Pipe?
     let port = 9453
 
     private var process: Process?
@@ -260,8 +264,11 @@ final class StudioBridgeController: ObservableObject {
             p.executableURL = python
             p.arguments = [script.path, StudioPaths.bridge.path, String(port), host.trimmingCharacters(in: .whitespacesAndNewlines)]
             let pipe = Pipe()
+            let commandPipe = Pipe()
+            p.standardInput = commandPipe
             p.standardOutput = pipe
             p.standardError = pipe
+            self.input = commandPipe
             let launchedRunID = UUID()
             let reader = StudioProcessReader { [weak self] message in
                 Task { @MainActor in
@@ -300,6 +307,27 @@ final class StudioBridgeController: ObservableObject {
                         self.onDelete?(requestID)
                     } else if message["type"] as? String == "bridgeReset" {
                         self.onReset?()
+                    } else if message["type"] as? String == "diagnosticReply",
+                              let raw = message["reply"],
+                              let data = try? JSONSerialization.data(withJSONObject: raw),
+                              let reply = try? JSONDecoder().decode(StudioDiagnosticReply.self, from: data),
+                              reply.schemaVersion == 2,
+                              let pending = self.pendingDiagnosticDomains.removeValue(forKey: reply.id),
+                              self.authenticatedSessions[reply.sessionID] != nil {
+                        // Highlight/edit/undo return an acknowledgement without a new tree.
+                        // Preserve the previous snapshot until the user selects Refresh.
+                        if reply.entries.isEmpty,
+                           let previous = self.diagnosticResults[pending.domain] {
+                            self.diagnosticResults[pending.domain] = StudioDiagnosticReply(
+                                schemaVersion: reply.schemaVersion, id: reply.id,
+                                sessionID: reply.sessionID, success: reply.success,
+                                message: reply.message, entries: previous.entries)
+                        } else {
+                            self.diagnosticResults[pending.domain] = reply
+                        }
+                        self.diagnosticRevision += 1
+                    } else if message["type"] as? String == "diagnosticRejected" {
+                        self.error = message["reason"] as? String ?? "Diagnostic request refused"
                     } else if let value = message["text"] as? String { self.error = value }
                 }
             }
@@ -335,8 +363,13 @@ final class StudioBridgeController: ObservableObject {
         if let p = process, p.isRunning { p.terminate() }
         output?.fileHandleForReading.readabilityHandler = nil
         output = nil
+        try? input?.fileHandleForWriting.close()
+        input = nil
         reader = nil
         process = nil
+        pendingDiagnosticDomains.removeAll()
+        diagnosticResults.removeAll()
+        diagnosticRevision += 1
         isStarting = false
         isRunning = false
         token = ""
@@ -345,6 +378,32 @@ final class StudioBridgeController: ObservableObject {
         lastAuthenticatedPeerAt = nil
         authenticatedSessions = [:]
         receivedBridgeEntries = 0
+    }
+
+    /// Queue a bounded command to the local child process, not over an unauthenticated LAN port.
+    @discardableResult
+    func sendDiagnostic(domain: String, operation: String,
+                        targetID: String? = nil, arguments: [String: String] = [:]) -> Bool {
+        pendingDiagnosticDomains = pendingDiagnosticDomains.filter {
+            Date().timeIntervalSince($0.value.created) < 50
+        }
+        let live = authenticatedSessions.filter { Date().timeIntervalSince($0.value) < 100 }
+        // Do not guess which device to mutate when multiple Debug iPhones are paired.
+        guard isRunning, let input, live.count == 1, let session = live.first?.key,
+              pendingDiagnosticDomains.count < 32 else { return false }
+        let request = StudioDiagnosticCommand(
+            id: UUID(), sessionID: session, domain: domain,
+            operation: operation, targetID: targetID, arguments: arguments)
+        guard let data = try? JSONEncoder().encode(request),
+              data.count < 8192 else { return false }
+        do {
+            try input.fileHandleForWriting.write(contentsOf: data + Data([10]))
+            pendingDiagnosticDomains[request.id] = (domain: domain, created: Date())
+            return true
+        } catch {
+            self.error = error.localizedDescription
+            return false
+        }
     }
 
     /// Revoke a leaked or stale pairing token while no collector is listening.

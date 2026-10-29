@@ -21,6 +21,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 from studio_rules import redact_json, MAX_PREVIEW
+from studio_diagnostics import DiagnosticsBroker
 
 PREFIX = "PTSTUDIO:"
 MAX_PAYLOAD = 2 * 1024 * 1024
@@ -249,6 +250,38 @@ class CollectorState:
         self.lock = threading.Lock()
         self.nonces = {}
         self.sessions = {}
+        self.diagnostics = DiagnosticsBroker()
+
+    def diagnostic_request(self, headers, path, data):
+        """The v1 network collector and its ACK contract remain unchanged."""
+        if not secrets.compare_digest(headers.get("Authorization", ""), "Bearer " + self.token):
+            return 401, None, None
+        try:
+            nonce = as_uuid(headers.get("X-PTStudio-Nonce"))
+            sent_at = int(headers.get("X-PTStudio-Sent-At", ""))
+            payload = json.loads(data)
+            if abs(int(time.time()) - sent_at) > NONCE_TTL or not isinstance(payload, dict):
+                return 401, None, None
+        except (ValueError, TypeError):
+            return 400, None, None
+        with self.lock:
+            now = int(time.time())
+            self.nonces = {k: v for k, v in self.nonces.items() if v > now}
+            if nonce in self.nonces:
+                return 409, None, None
+            self.nonces[nonce] = now + NONCE_TTL
+            self.diagnostics.expire()
+            if path == "/v2/diagnostics/poll":
+                sid = payload.get("sessionID")
+                result = self.diagnostics.poll(sid, self.sessions)
+                return (200, result, None) if result is not None else (403, None, None)
+            if path == "/v2/diagnostics/reply":
+                try:
+                    result = self.diagnostics.accept_reply(payload)
+                except ValueError:
+                    return 400, None, None
+                return (200, {"schemaVersion": 2}, result) if result else (409, None, None)
+        return 404, None, None
 
     def receive(self, headers, data):
         if not secrets.compare_digest(headers.get("Authorization", ""),
@@ -350,7 +383,7 @@ def make_handler(state):
                 self.wfile.write(body)
 
         def do_POST(self):
-            if self.path != "/v1/events":
+            if self.path not in ("/v1/events", "/v2/diagnostics/poll", "/v2/diagnostics/reply"):
                 self.reply(404)
                 return
             if self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower() != "application/json":
@@ -361,13 +394,21 @@ def make_handler(state):
             except ValueError:
                 self.reply(400)
                 return
-            if not 0 < size <= MAX_PAYLOAD:
+            limit = MAX_PAYLOAD if self.path == "/v1/events" else 512 * 1024
+            if not 0 < size <= limit:
                 self.reply(413)
                 return
-            status, ack, events = state.receive(self.headers, self.rfile.read(size))
-            for event in events:
-                emit(event)
-            self.reply(status, ack)
+            body = self.rfile.read(size)
+            if self.path != "/v1/events":
+                status, result, event = state.diagnostic_request(self.headers, self.path, body)
+                if event is not None:
+                    emit({"type": "diagnosticReply", "reply": event})
+                self.reply(status, result)
+            else:
+                status, ack, events = state.receive(self.headers, body)
+                for event in events:
+                    emit(event)
+                self.reply(status, ack)
     return Handler
 
 
@@ -376,8 +417,23 @@ def main():
     port = int(sys.argv[2]) if len(sys.argv) > 2 else 9453
     host = sys.argv[3] if len(sys.argv) > 3 else "127.0.0.1"
     cert, key, token, fingerprint, ca_certificate = prepare_identity(folder, host)
-    server = ThreadingHTTPServer(("0.0.0.0", port), make_handler(CollectorState(token)))
+    state = CollectorState(token)
+    server = ThreadingHTTPServer(("0.0.0.0", port), make_handler(state))
     server.daemon_threads = True
+
+    def command_reader():
+        # Local macOS app -> child process only. Commands are never accepted from LAN.
+        for line in sys.stdin:
+            try:
+                if len(line) > 16384:
+                    continue
+                item = json.loads(line)
+                with state.lock:
+                    if not state.diagnostics.enqueue(item, state.sessions):
+                        emit({"type": "diagnosticRejected", "reason": "Session offline or invalid command"})
+            except (ValueError, TypeError):
+                emit({"type": "diagnosticRejected", "reason": "Malformed local command"})
+    threading.Thread(target=command_reader, daemon=True).start()
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.load_cert_chain(certfile=str(cert), keyfile=str(key))
