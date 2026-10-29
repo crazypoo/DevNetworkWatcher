@@ -74,7 +74,7 @@ class BridgeProtocolTests(unittest.TestCase):
         self.assertEqual(ack["acceptedSequence"], 3)
         self.assertEqual(ack["sessionID"], session)
         self.assertEqual(len(delivered), 2)
-        self.assertEqual(delivered[0], {"type": "bridgePeer"})
+        self.assertEqual(delivered[0], {"type": "bridgePeer", "sessionID": session})
         self.assertNotIn("raw-secret", json.dumps(delivered))
         self.assertNotIn("/private/path", json.dumps(delivered))
         self.assertEqual(delivered[1]["entry"]["source"], "PTools Live")
@@ -85,7 +85,9 @@ class BridgeProtocolTests(unittest.TestCase):
         nonce = str(uuid.uuid4())
         ping = json.dumps({"schemaVersion": 1,
                            "events": [sample_event("heartbeat", 4, session)]}).encode()
-        self.assertEqual(state.receive(headers("a" * 32, nonce), ping)[0], 200)
+        heartbeat_status, _, heartbeat_messages = state.receive(headers("a" * 32, nonce), ping)
+        self.assertEqual(heartbeat_status, 200)
+        self.assertEqual(heartbeat_messages, [{"type": "bridgePeer", "sessionID": session}])
         self.assertEqual(state.receive(headers("a" * 32, nonce), ping)[0], 409)
         self.assertEqual(state.receive(headers("incorrect"), data)[0], 401)
         self.assertEqual(state.receive(headers("a" * 32, timestamp=int(time.time()) - 500), data)[0], 401)
@@ -146,7 +148,7 @@ class BridgeProtocolTests(unittest.TestCase):
                 self.assertEqual(json.loads(response.read())["acceptedSequence"], 2)
                 peer_notice = proc.stdout.readline()
                 self.assertEqual(json.loads(peer_notice[len("PTSTUDIO:"):]),
-                                 {"type": "bridgePeer"})
+                                 {"type": "bridgePeer", "sessionID": session})
                 emitted = proc.stdout.readline()
                 self.assertTrue(emitted.startswith("PTSTUDIO:"), emitted)
                 self.assertNotIn("raw-secret", emitted)
