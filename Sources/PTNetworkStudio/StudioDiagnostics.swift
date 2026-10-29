@@ -41,6 +41,13 @@ struct StudioDiagnosticReply: Decodable {
     let entries: [StudioDiagnosticEntry]
 }
 
+/// Calculated on refresh instead of rebuilding the parent dictionary for every SwiftUI row.
+private struct StudioHierarchyRow: Identifiable {
+    let entry: StudioDiagnosticEntry
+    let depth: Int
+    var id: String { entry.id }
+}
+
 @MainActor
 struct StudioDiagnosticsWorkspaceView: View {
     @EnvironmentObject private var bridge: StudioBridgeController
@@ -52,13 +59,21 @@ struct StudioDiagnosticsWorkspaceView: View {
     @State private var viewing3D = false
     @State private var alphaValue = 1.0
     @State private var lastMessage: String?
+    @State private var indexedEntries: [String: StudioDiagnosticEntry] = [:]
+    @State private var children: [String: [String]] = [:]
+    @State private var treeRows: [StudioHierarchyRow] = []
+    @State private var collapsedIDs: Set<String> = []
+    @State private var decodedPreview: NSImage?
 
     private var targetDomain: String {
         domain == "storage" ? storageArea : domain == "console" ? "logging" : domain
     }
     private var reply: StudioDiagnosticReply? { bridge.diagnosticResults[targetDomain] }
     private var entries: [StudioDiagnosticEntry] { reply?.entries ?? [] }
-    private var selected: StudioDiagnosticEntry? { entries.first(where: { $0.id == selectedID }) }
+    private var selected: StudioDiagnosticEntry? {
+        guard let selectedID else { return nil }
+        return indexedEntries[selectedID]
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -92,9 +107,24 @@ struct StudioDiagnosticsWorkspaceView: View {
             } else {
                 HStack(spacing: 0) {
                     List(selection: $selectedID) {
-                        ForEach(entries) { entry in
+                        ForEach(domain == "inspector" ? treeRows :
+                                entries.map { StudioHierarchyRow(entry: $0, depth: 0) }) { row in
+                            let entry = row.entry
                             HStack {
-                                Text(entry.kind == "UIView" ? "▣" : "•")
+                                if domain == "inspector" && children[entry.id] != nil {
+                                    Button {
+                                        if !collapsedIDs.insert(entry.id).inserted {
+                                            collapsedIDs.remove(entry.id)
+                                        }
+                                        rebuildVisibleRows()
+                                    } label: {
+                                        Image(systemName: collapsedIDs.contains(entry.id) ? "chevron.right" : "chevron.down")
+                                    }
+                                    .buttonStyle(.plain).frame(width: 12)
+                                } else {
+                                    Image(systemName: "circle.fill").font(.system(size: 4))
+                                        .frame(width: 12).foregroundStyle(.secondary)
+                                }
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(entry.name).lineLimit(1)
                                     if let d = entry.detail {
@@ -106,7 +136,7 @@ struct StudioDiagnosticsWorkspaceView: View {
                                     Image(systemName: "plus.circle.fill").foregroundStyle(.green)
                                 }
                             }
-                            .padding(.leading, domain == "inspector" ? CGFloat(min(14, hierarchyDepth(entry)) * 10) : 0)
+                            .padding(.leading, CGFloat(min(14, row.depth) * 10))
                             .tag(entry.id)
                         }
                     }
@@ -114,7 +144,9 @@ struct StudioDiagnosticsWorkspaceView: View {
                     Divider()
                     ScrollView {
                         VStack(alignment: .leading, spacing: 12) {
-                            if let message = reply?.message {
+                            if let message = reply?.message,
+                               !message.hasPrefix("fingerprint:"),
+                               !message.hasPrefix("unchanged:") {
                                 Text(message).font(.caption).foregroundStyle(.secondary)
                             }
                             if domain == "inspector" {
@@ -132,9 +164,7 @@ struct StudioDiagnosticsWorkspaceView: View {
                                             Text(entry.attributes[key] ?? "").textSelection(.enabled)
                                         }.font(.caption)
                                     }
-                                    if let preview = entry.previewBase64,
-                                       let bytes = Data(base64Encoded: preview),
-                                       let image = NSImage(data: bytes) {
+                                    if let image = decodedPreview {
                                         Image(nsImage: image).resizable().scaledToFit()
                                             .frame(maxHeight: 260)
                                             .accessibilityLabel("Explicitly authorized on-device screen preview")
@@ -187,13 +217,21 @@ struct StudioDiagnosticsWorkspaceView: View {
             }.font(.caption2).foregroundStyle(.secondary)
         }
         .padding(18)
+        .onAppear { rebuildIndex() }
         .onChange(of: bridge.diagnosticRevision) { _ in
             if let data = reply {
                 presentIDs = Set(data.entries.map(\.id))
                 lastMessage = data.success ? nil : data.message ?? "Diagnostic command rejected"
             }
+            rebuildIndex()
         }
-        .onChange(of: storageArea) { _ in selectedID = nil; presentIDs = []; previousIDs = [] }
+        .onChange(of: selectedID) { _ in updatePreview() }
+        .onChange(of: storageArea) { _ in
+            selectedID = nil
+            presentIDs = []
+            previousIDs = []
+            rebuildIndex()
+        }
     }
 
     // Overview derived only from the actual view coordinates, not arbitrary script execution.
@@ -216,17 +254,48 @@ struct StudioDiagnosticsWorkspaceView: View {
         .accessibilityLabel("View hierarchy perspective preview")
     }
 
-    private func hierarchyDepth(_ entry: StudioDiagnosticEntry) -> Int {
-        let parents = Dictionary(uniqueKeysWithValues: entries.map { ($0.id, $0.parentID) })
-        var parent = entry.parentID
-        var seen: Set<String> = []
-        var depth = 0
-        while let value = parent, depth < 20, !seen.contains(value) {
-            seen.insert(value)
-            depth += 1
-            parent = parents[value] ?? nil
+    private func rebuildIndex() {
+        indexedEntries = Dictionary(entries.map { ($0.id, $0) },
+                                    uniquingKeysWith: { first, _ in first })
+        var next: [String: [String]] = [:]
+        for entry in entries {
+            if let parent = entry.parentID, indexedEntries[parent] != nil {
+                next[parent, default: []].append(entry.id)
+            }
         }
-        return depth
+        children = next
+        collapsedIDs = collapsedIDs.intersection(Set(indexedEntries.keys))
+        rebuildVisibleRows()
+        updatePreview()
+    }
+
+    private func rebuildVisibleRows() {
+        var result: [StudioHierarchyRow] = []
+        var visited = Set<String>()
+        func walk(_ entry: StudioDiagnosticEntry, _ depth: Int) {
+            guard depth < 20, result.count < 1_200, visited.insert(entry.id).inserted else { return }
+            result.append(StudioHierarchyRow(entry: entry, depth: depth))
+            guard !collapsedIDs.contains(entry.id) else { return }
+            for id in children[entry.id] ?? [] {
+                if let child = indexedEntries[id] { walk(child, depth + 1) }
+            }
+        }
+        for entry in entries where entry.parentID == nil || indexedEntries[entry.parentID ?? ""] == nil {
+            walk(entry, 0)
+        }
+        // Preserve unusual/cyclic nodes as visible roots rather than discarding them.
+        for entry in entries where !visited.contains(entry.id) { walk(entry, 0) }
+        treeRows = result
+    }
+
+    private func updatePreview() {
+        guard let preview = selected?.previewBase64, preview.count <= 320_000,
+              let bytes = Data(base64Encoded: preview) else {
+            decodedPreview = nil
+            return
+        }
+        // Decode at most once per selection/snapshot, never during body evaluation.
+        decodedPreview = NSImage(data: bytes)
     }
 
     private func request(_ operation: String, target: String? = nil, args: [String: String] = [:]) {

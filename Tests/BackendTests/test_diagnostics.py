@@ -3,6 +3,7 @@ import json
 import sys
 from pathlib import Path
 import time
+import threading
 import unittest
 import uuid
 
@@ -60,6 +61,35 @@ class DiagnosticsTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             safe_reply({**reply, "entries": [{**reply["entries"][0],
                                               "previewBase64": "x" * 400000}]})
+
+    def test_long_poll_wakes_on_command_without_starving_other_sessions(self):
+        broker = DiagnosticsBroker()
+        sid = str(uuid.uuid4())
+        command = make_command(sid)
+        def enqueue_later():
+            time.sleep(0.03)
+            self.assertTrue(broker.enqueue(command, {sid: {}}))
+        producer = threading.Thread(target=enqueue_later)
+        producer.start()
+        start = time.monotonic()
+        result = broker.poll(sid, {sid: {}}, wait_seconds=0.4)
+        producer.join(timeout=1)
+        self.assertEqual(len(result["commands"]), 1)
+        self.assertLess(time.monotonic() - start, 0.3)
+
+    def test_freeform_reply_fields_are_redacted(self):
+        from studio_diagnostics import safe_reply
+        sid = str(uuid.uuid4())
+        reply = {"schemaVersion": 2, "id": str(uuid.uuid4()),
+                 "sessionID": sid, "success": True,
+                 "message": "Authorization: ABCDEF1234",
+                 "entries": [{"id": "log1", "kind": "log", "name": "Login",
+                              "detail": "Bearer super-secret-token a@company.com",
+                              "attributes": {"note": "password=hunter2"}}]}
+        clean = safe_reply(reply)
+        serialized = json.dumps(clean)
+        for value in ("ABCDEF1234", "super-secret-token", "a@company.com", "hunter2"):
+            self.assertNotIn(value, serialized)
 
     def test_replay_token_and_nonce_required_without_touching_v1(self):
         token = "a" * 32
