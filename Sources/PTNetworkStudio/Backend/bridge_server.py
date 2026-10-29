@@ -265,10 +265,10 @@ class CollectorState:
                 if seq <= last:
                     return 409, None, []
                 last = seq
-                if kind == "hello":
-                    # Authentication, nonce and schema checks have already succeeded.
-                    # Do not reveal token, device identity or IP in UI notifications.
-                    messages.append({"type": "bridgePeer"})
+                if kind in ("hello", "heartbeat"):
+                    # Successfully authenticated and non-replayed. Session UUID
+                    # is ephemeral; never expose a token or hardware identity.
+                    messages.append({"type": "bridgePeer", "sessionID": session_id})
                 elif kind in ("recordUpsert", "recordFinalize"):
                     messages.append({"type": "entry", "entry": entry})
                 elif kind == "recordDelete":
