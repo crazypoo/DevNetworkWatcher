@@ -96,7 +96,8 @@ def safe_reply(value):
     message = value.get("message")
     if message is not None and (not isinstance(message, str) or len(message) > 256):
         raise ValueError("invalid reply message")
-    return {"schemaVersion": 2, "id": value["id"], "sessionID": value["sessionID"],
+    return {"schemaVersion": 2, "id": str(uuid.UUID(value["id"])),
+            "sessionID": str(uuid.UUID(value["sessionID"])),
             "success": value["success"], "message": message, "entries": clean}
 
 
@@ -106,9 +107,14 @@ class DiagnosticsBroker:
         self.pending = {}
 
     def enqueue(self, command, authenticated_sessions):
-        if not validate_command(command) or command["sessionID"] not in authenticated_sessions:
+        if not validate_command(command):
             return False
-        sid = command["sessionID"]
+        sid = str(uuid.UUID(command["sessionID"]))
+        if sid not in authenticated_sessions:
+            return False
+        command = dict(command)
+        command["id"] = str(uuid.UUID(command["id"]))
+        command["sessionID"] = sid
         queue = self.queues.setdefault(sid, deque(maxlen=MAX_COMMANDS))
         if command["id"] in self.pending or len(queue) == MAX_COMMANDS:
             return False
@@ -117,8 +123,9 @@ class DiagnosticsBroker:
         return True
 
     def poll(self, sid, authenticated_sessions):
-        if not is_uuid(sid) or sid not in authenticated_sessions:
+        if not is_uuid(sid) or str(uuid.UUID(sid)) not in authenticated_sessions:
             return None
+        sid = str(uuid.UUID(sid))
         q = self.queues.setdefault(sid, deque(maxlen=MAX_COMMANDS))
         items = [q.popleft() for _ in range(min(4, len(q)))]
         return {"schemaVersion": 2, "commands": items}
