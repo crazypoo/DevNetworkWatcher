@@ -7,6 +7,8 @@ import json
 import secrets
 import time
 import uuid
+import threading
+import re
 from collections import deque
 
 SENSITIVE = ("token", "secret", "password", "cookie", "auth", "credential", "private", "keychain")
@@ -105,6 +107,7 @@ class DiagnosticsBroker:
     def __init__(self):
         self.queues = {}
         self.pending = {}
+        self.condition = threading.Condition()
 
     def enqueue(self, command, authenticated_sessions):
         if not validate_command(command):
@@ -115,29 +118,37 @@ class DiagnosticsBroker:
         command = dict(command)
         command["id"] = str(uuid.UUID(command["id"]))
         command["sessionID"] = sid
-        queue = self.queues.setdefault(sid, deque(maxlen=MAX_COMMANDS))
-        if command["id"] in self.pending or len(queue) == MAX_COMMANDS:
-            return False
-        queue.append(command)
-        self.pending[command["id"]] = (sid, time.monotonic() + 45)
-        return True
+        with self.condition:
+            queue = self.queues.setdefault(sid, deque(maxlen=MAX_COMMANDS))
+            if command["id"] in self.pending or len(queue) == MAX_COMMANDS:
+                return False
+            queue.append(command)
+            self.pending[command["id"]] = (sid, time.monotonic() + 45)
+            self.condition.notify_all()
+            return True
 
-    def poll(self, sid, authenticated_sessions):
+    def poll(self, sid, authenticated_sessions, wait_seconds=0):
         if not is_uuid(sid) or str(uuid.UUID(sid)) not in authenticated_sessions:
             return None
         sid = str(uuid.UUID(sid))
-        q = self.queues.setdefault(sid, deque(maxlen=MAX_COMMANDS))
-        items = [q.popleft() for _ in range(min(4, len(q)))]
+        end = time.monotonic() + min(max(float(wait_seconds), 0), 10)
+        with self.condition:
+            q = self.queues.setdefault(sid, deque(maxlen=MAX_COMMANDS))
+            while not q and time.monotonic() < end:
+                self.condition.wait(timeout=max(0, end - time.monotonic()))
+            items = [q.popleft() for _ in range(min(4, len(q)))]
         return {"schemaVersion": 2, "commands": items}
 
     def accept_reply(self, reply):
         clean = safe_reply(reply)
-        pending = self.pending.get(clean["id"])
-        if pending is None or pending[0] != clean["sessionID"] or time.monotonic() > pending[1]:
-            return None
-        del self.pending[clean["id"]]
-        return clean
+        with self.condition:
+            pending = self.pending.get(clean["id"])
+            if pending is None or pending[0] != clean["sessionID"] or time.monotonic() > pending[1]:
+                return None
+            del self.pending[clean["id"]]
+            return clean
 
     def expire(self):
         now = time.monotonic()
-        self.pending = {k: v for k, v in self.pending.items() if v[1] > now}
+        with self.condition:
+            self.pending = {k: v for k, v in self.pending.items() if v[1] > now}
