@@ -171,9 +171,9 @@ struct BridgeSetupSheet: View {
             Text("TLS 1.2+ • SHA-256 certificate pinning • 256-bit pairing token • redacted events")
                 .font(.caption).foregroundStyle(.secondary)
             HStack {
-                Text(bridge.isRunning ? "Listening on port \(bridge.port)" : "Stopped")
+                Text(bridge.isRunning ? "Listening on port \(bridge.port)" : (bridge.isStarting ? "Starting secure collector…" : "Stopped"))
                 Spacer()
-                Button(bridge.isRunning ? "Stop Bridge" : "Start Bridge") {
+                Button(bridge.isRunning ? "Stop Bridge" : (bridge.isStarting ? "Starting…" : "Start Bridge")) {
                     if bridge.isRunning { bridge.stop() }
                     else {
                         bridge.onEntry = { [weak store] entry in store?.upsert(entry) }
@@ -182,6 +182,7 @@ struct BridgeSetupSheet: View {
                         bridge.start(host: macIP)
                     }
                 }
+                .disabled(bridge.isStarting)
             }
             Divider()
             TextField("Mac LAN IP", text: $macIP)
@@ -200,7 +201,11 @@ struct BridgeSetupSheet: View {
                     NSWorkspace.shared.activateFileViewerSelecting([StudioPaths.bridge.appendingPathComponent("bridge-root-ca.cer")])
                 }.disabled(!bridge.isRunning)
                 Spacer()
+                Button("Rotate Pairing Token") { bridge.rotatePairingToken() }
+                    .disabled(bridge.isRunning || bridge.isStarting)
             }
+            Text("Rotate after any token exposure, then restart Bridge and enter the new token on the iPhone. Existing pairings are revoked.")
+                .font(.caption).foregroundStyle(.secondary)
             Text("On your authorized iPhone, install the generated CA profile and explicitly enable full trust in Settings → General → About → Certificate Trust Settings. Only then will PTools pass BOTH system trust and SHA-256 pinning. Never ship the CA or pairing token in an App Store build.")
                 .font(.caption).foregroundStyle(.orange)
             if let error = bridge.error { Text(error).foregroundStyle(.red).font(.caption) }
