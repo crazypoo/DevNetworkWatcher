@@ -50,6 +50,11 @@ Mac 点击 **Network** → 开启「Allow authenticated LAN proxy clients」，�
 
 ## PTools → Mac 实时连接（统一 schema v1）
 
+**连接诊断：** 左侧栏现在会显示独立的 **PTOOLS BRIDGE** 状态（Stopped / Listening / 近期已认证会话数、PTools 事件计数）。只在 iOS Keychain 中出现 `Paired` 不等于连接；Mac 必须收到经过 TLS、Token、Nonce 校验的 `hello` / `heartbeat` 才计为已认证会话。主界面的 `Capture` 是另一个 HTTP 代理（9090），**不负责启动 Bridge**。需在 iPhone → Start Bridge 或启用自动启动；然后让 Debug App 主动发送网络请求，列表才会有 PTools Live 记录。
+
+**证书链：** Bridge 使用原有开发 CA 通过 OpenSSL CA 签发叶证书，启动监听前会验证链是否有效。验证不通过不会发布 Bonjour，以免误报连接就绪。旧 CA 保持不变；如主动更换 Mac TLS 主机名或已失效叶证书被重签，需要在 iPhone 上确认更新后的叶证书指纹。现有开发 CA 如果损坏，需要显式重新建立信任，不能静默绕过 iOS TLS 校验。
+
+
 **已内置独立 PTools 模块，不要再复制旧 `PToolsIntegration/PTNetworkStudioBridge.swift`。** SPM 显式添加 `PooToolsDEBUG` + `PToolsDebugStudioBridge`；CocoaPods 使用 `PooTools/DEBUG_StudioBridge`。
 
 1. Mac 打开 **iPhone**，优先使用预填的稳定 `.local` 主机名并点击 **Start Bridge**。端口 **9453**，接口 `POST /v1/events`。Bridge 就绪后通过 Bonjour `_ptstudio._tcp.` 广播，附带协议版本、安装 UUID 和 TLS 主机名，**不广播 Token、证书指纹或流量数据**。如改用手输 IP，IP 变动会重新签发叶证书并更新指纹。
