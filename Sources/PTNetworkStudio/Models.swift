@@ -41,7 +41,8 @@ struct StudioSession: Codable {
 @MainActor
 final class CaptureStore: ObservableObject {
     @Published private(set) var entries: [CaptureEntry] = []
-    @Published private(set) var statistics = CaptureStatistics.empty
+    // Updated immediately before @Published entries: one UI invalidation per batch.
+    private(set) var statistics = CaptureStatistics.empty
     /// The source of truth is indexed by UUID, never a repeatedly copied SwiftUI array.
     private var recordsByID: [UUID: CaptureEntry] = [:]
     private var orderedIDs: [UUID] = []
