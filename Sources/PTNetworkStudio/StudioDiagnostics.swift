@@ -50,6 +50,7 @@ final class StudioDiagnosticStore: ObservableObject {
     @Published private(set) var inspector: [StudioDiagnosticEntry] = []
     @Published private(set) var previousInspector: [StudioDiagnosticEntry] = []
     @Published private(set) var diffSummary = "Capture two snapshots to compare"
+    @Published var selectedSessionID: UUID?
     @Published private(set) var lastError: String?
     @Published private(set) var lastAction: String?
     @Published private(set) var lastUndoID: String?
@@ -59,7 +60,9 @@ final class StudioDiagnosticStore: ObservableObject {
     func request(_ domain: String, operation: String,
                  targetID: String? = nil, arguments: [String: String] = [:],
                  bridge: StudioBridgeController) {
-        guard let session = bridge.diagnosticSessions.keys.sorted(by: { $0.uuidString < $1.uuidString }).first else {
+        let selected = selectedSessionID.flatMap { bridge.diagnosticSessions[$0] == nil ? nil : $0 }
+        let session = selected ?? bridge.diagnosticSessions.max(by: { $0.value < $1.value })?.key
+        guard let session else {
             lastError = "No paired diagnostic agent is connected. Enable it in the iOS Debug app."
             return
         }

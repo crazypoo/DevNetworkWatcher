@@ -13,8 +13,8 @@ struct StudioHierarchy2DView: View {
             let rectangles = Array(nodes.filter { $0.frame != nil }.prefix(400))
             let extentX = max(1, rectangles.compactMap { $0.frame.map { $0.x + $0.width } }.max() ?? 1)
             let extentY = max(1, rectangles.compactMap { $0.frame.map { $0.y + $0.height } }.max() ?? 1)
-            let scale = max(0.01, min((viewport.size.width - 24) / extentX,
-                                     (viewport.size.height - 24) / extentY))
+            let scale = max(0.01, min((Double(viewport.size.width) - 24) / extentX,
+                                     (Double(viewport.size.height) - 24) / extentY))
             ZStack(alignment: .topLeading) {
                 Color(nsColor: .textBackgroundColor)
                 ForEach(rectangles) { node in
@@ -22,9 +22,9 @@ struct StudioHierarchy2DView: View {
                         Rectangle()
                             .stroke(node.id == selectedID ? Color.orange : Color.accentColor.opacity(0.55),
                                     lineWidth: node.id == selectedID ? 2 : 0.7)
-                            .frame(width: max(1, rect.width * scale),
-                                   height: max(1, rect.height * scale))
-                            .offset(x: 12 + rect.x * scale, y: 12 + rect.y * scale)
+                            .frame(width: CGFloat(max(1, rect.width * scale)),
+                                   height: CGFloat(max(1, rect.height * scale)))
+                            .offset(x: CGFloat(12 + rect.x * scale), y: CGFloat(12 + rect.y * scale))
                     }
                 }
             }.clipped()
@@ -59,7 +59,7 @@ struct StudioHierarchy3DView: NSViewRepresentable {
                 depth += 1
                 parent = parents[id] ?? nil
             }
-            let shape = SCNBox(width: max(1, rect.width), height: max(1, rect.height),
+            let shape = SCNBox(width: CGFloat(max(1, rect.width)), height: CGFloat(max(1, rect.height)),
                                length: 1.5, chamferRadius: 0)
             let material = SCNMaterial()
             material.diffuse.contents = node.id == selectedID

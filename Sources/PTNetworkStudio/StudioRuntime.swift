@@ -306,7 +306,9 @@ final class StudioBridgeController: ObservableObject {
                     } else if message["type"] as? String == "diagnosticPeer",
                               let raw = message["sessionID"] as? String,
                               let sessionID = UUID(uuidString: raw) {
-                        self.diagnosticSessions[sessionID] = .now
+                        let now = Date()
+                        self.diagnosticSessions = self.diagnosticSessions.filter { now.timeIntervalSince($0.value) < 60 }
+                        self.diagnosticSessions[sessionID] = now
                     } else if message["type"] as? String == "diagnosticReply",
                               let raw = message["reply"],
                               let data = try? JSONSerialization.data(withJSONObject: raw),
