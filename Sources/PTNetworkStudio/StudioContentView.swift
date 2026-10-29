@@ -17,6 +17,9 @@ struct StudioContentView: View {
     @State private var scope: Scope = .all
     @State private var selectedID: UUID?
     @State private var search = ""
+    @State private var appliedSearch = ""
+    @State private var visibleEntries: [CaptureEntry] = []
+    @State private var searchTask: Task<Void, Never>?
     @State private var port = "9090"
     @State private var showComposer = false
     @State private var inspectorTab = 0
@@ -36,12 +39,13 @@ struct StudioContentView: View {
     }
 
     private var hosts: [HostCount] {
-        let groups = Dictionary(grouping: store.entries, by: \.host)
-        return groups.map { HostCount(name: $0.key, count: $0.value.count) }.sorted { $0.count == $1.count ? $0.name < $1.name : $0.count > $1.count }
+        store.statistics.hosts.map { HostCount(name: $0.name, count: $0.count) }
     }
 
-    private var filteredEntries: [CaptureEntry] {
-        store.entries.filter { item in
+    private var filteredEntries: [CaptureEntry] { visibleEntries }
+
+    private func refreshVisibleEntries() {
+        visibleEntries = store.entries.filter { item in
             let scopeMatches: Bool
             switch scope {
             case .all: scopeMatches = true
@@ -50,14 +54,12 @@ struct StudioContentView: View {
             case .failed: scopeMatches = item.error != nil || (item.status ?? 0) >= 400
             case .host(let host): scopeMatches = item.host == host
             }
-            let textMatches = search.isEmpty || [item.url, item.method, item.host, item.statusText].contains { $0.localizedCaseInsensitiveContains(search) }
+            let textMatches = appliedSearch.isEmpty || [item.url, item.method, item.host, item.statusText].contains { $0.localizedCaseInsensitiveContains(appliedSearch) }
             return scopeMatches && textMatches
         }.reversed()
     }
 
-    private var selectedEntry: CaptureEntry? {
-        store.entries.first(where: { $0.id == selectedID })
-    }
+    private var selectedEntry: CaptureEntry? { store.entry(id: selectedID) }
 
     var body: some View {
         HStack(spacing: 0) {
@@ -68,6 +70,22 @@ struct StudioContentView: View {
             inspector.frame(width: 395)
         }
         .background(Color(nsColor: .windowBackgroundColor))
+        .onAppear { refreshVisibleEntries() }
+        .onReceive(store.$entries) { _ in
+            // Network updates are batched by CaptureStore; only filter once per published batch.
+            refreshVisibleEntries()
+        }
+        .onChange(of: scope) { _ in refreshVisibleEntries() }
+        .onChange(of: search) { newSearch in
+            searchTask?.cancel()
+            searchTask = Task {
+                try? await Task.sleep(for: .milliseconds(180))
+                guard !Task.isCancelled else { return }
+                appliedSearch = newSearch
+                refreshVisibleEntries()
+            }
+        }
+        .onDisappear { searchTask?.cancel(); searchTask = nil }
         .toolbar {
             ToolbarItemGroup(placement: .navigation) {
                 HStack(spacing: 8) {
@@ -159,15 +177,15 @@ struct StudioContentView: View {
 
             sidebarHeading("QUICK FILTERS")
             scopeRow("All Traffic", icon: "arrow.left.arrow.right", scope: .all, count: store.entries.count)
-            scopeRow("HTTP", icon: "globe", scope: .http, count: store.entries.filter { $0.url.hasPrefix("http://") }.count)
-            scopeRow("HTTPS (decrypted)", icon: "lock.shield", scope: .https, count: store.entries.filter { $0.url.hasPrefix("https://") }.count)
+            scopeRow("HTTP", icon: "globe", scope: .http, count: store.statistics.httpCount)
+            scopeRow("HTTPS (decrypted)", icon: "lock.shield", scope: .https, count: store.statistics.httpsCount)
             if !store.paused.isEmpty {
                 HStack {
                     Label("Paused: \(store.paused.count)", systemImage: "pause.circle.fill").foregroundStyle(.orange)
                     Spacer()
                 }.font(.caption).padding(.horizontal, 15).padding(.vertical, 8)
             }
-            scopeRow("Errors", icon: "exclamationmark.triangle", scope: .failed, count: store.entries.filter { $0.error != nil || ($0.status ?? 0) >= 400 }.count)
+            scopeRow("Errors", icon: "exclamationmark.triangle", scope: .failed, count: store.statistics.errorCount)
             Divider().padding(.vertical, 14)
             sidebarHeading("DOMAINS")
             ScrollView {
