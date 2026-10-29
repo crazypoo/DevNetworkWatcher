@@ -89,6 +89,8 @@ func disconnectMac() async {
 
 Mac Collector 验证 Bearer token、`X-PTStudio-Nonce`、`X-PTStudio-Sent-At`、schema 版本及 eventID 去重，返回 HTTP 200 JSON ACK（`schemaVersion/sessionID/acceptedSequence`）。客户端批量发送最多 24 个事件，根据 ACK 重试。iPhone 与 Mac 需处于可互访的可信局域网，Mac 防火墙须允许 TCP 9453。
 
+**2026-10-29 配对安全修复：** PTools 示例 App 已移除随启动自动连接和硬编码的配对凭据；此版本 Collector 首次启动时废弃旧的 `bridge-token` 文件并生成 `bridge-token-v2`，旧凭据必须重新配对。之后 Token 在正常重启时保持有效；怀疑泄露时先 Stop Bridge，点击 **Rotate Pairing Token**，再 Start Bridge 获取新 Token。Bridge 按钮在 Python 初始化期间显示 Starting，只有收到 `bridgeReady` 后才表示监听成功；PTools 侧应检查 `PTStudioBridge.status().deliveryState` 是否为 `.connected`（收到 ACK），不能只检查 `isRunning`。
+
 **验证边界：** Python 后端真实 TLS/CA、身份校验、ACK/重试及脱敏测试不代表已完成 macOS Xcode/iOS 真机联调。仅用于开发调试；测试完成关闭 Bridge 并按需撤销开发 CA 信任。
 
 ## 其他功能与界面
