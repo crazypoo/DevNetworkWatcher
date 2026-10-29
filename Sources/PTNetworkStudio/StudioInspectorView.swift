@@ -6,6 +6,8 @@ struct StudioInspectorView: View {
     @ObservedObject var bridge: StudioBridgeController
     @ObservedObject var diagnostics: StudioDiagnosticStore
     @State private var selectedID: String?
+    @State private var editKey = "alpha"
+    @State private var editValue = "1.0"
 
     var body: some View {
         VStack(spacing: 0) {
@@ -64,6 +66,37 @@ struct StudioInspectorView: View {
                                 Text("Frame: \(Int(rect.x)), \(Int(rect.y))  \(Int(rect.width))×\(Int(rect.height))")
                                     .font(.caption.monospacedDigit())
                             }
+                            Divider()
+                            Button("Highlight on iPhone") {
+                                diagnostics.request("inspector", operation: "highlight",
+                                                    targetID: selected.id, bridge: bridge)
+                            }
+                            .disabled(bridge.diagnosticSessions.isEmpty)
+                            Text("Remote edit (must be permitted in the iOS Debug app)").font(.caption)
+                            Picker("Property", selection: $editKey) {
+                                Text("Alpha").tag("alpha")
+                                Text("Hidden").tag("hidden")
+                                Text("X").tag("frame.x")
+                                Text("Y").tag("frame.y")
+                                Text("Width").tag("frame.width")
+                                Text("Height").tag("frame.height")
+                            }.labelsHidden()
+                            TextField("Value", text: $editValue)
+                                .textFieldStyle(.roundedBorder)
+                            HStack {
+                                Button("Apply") {
+                                    diagnostics.request("inspector", operation: "setProperty",
+                                                        targetID: selected.id,
+                                                        arguments: ["key": editKey, "value": editValue],
+                                                        bridge: bridge)
+                                }
+                                Button("Undo") {
+                                    guard let undo = diagnostics.lastUndoID else { return }
+                                    diagnostics.request("inspector", operation: "revert",
+                                                        arguments: ["undoID": undo], bridge: bridge)
+                                }.disabled(diagnostics.lastUndoID == nil)
+                            }
+                            .disabled(bridge.diagnosticSessions.isEmpty)
                             Spacer()
                         }.padding(16).frame(width: 330, alignment: .leading)
                     } else {
