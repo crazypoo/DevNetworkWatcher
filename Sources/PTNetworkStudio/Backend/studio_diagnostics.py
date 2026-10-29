@@ -23,6 +23,23 @@ ALLOWED = {
 MAX_COMMANDS = 32
 MAX_ENTRIES = 1200
 
+# Defense-in-depth redaction, including free-form log text and file names.
+# UI view hierarchy names are preserved, but credentials are never exported.
+BEARER = re.compile(r"(?i)\\b(bearer\\s+)[a-z0-9._~+/-]+")
+KEY_VALUE = re.compile(r"(?i)\\b(token|password|secret|api[_-]?key|authorization)\\s*[:=]\\s*[^\\s&,;]+")
+EMAIL = re.compile(r"(?i)[a-z0-9._%+-]+@[a-z0-9.-]+\\.[a-z]{2,}")
+QUERY = re.compile(r"(?i)(https?://[^\\s?#]+)\\?[^\\s#]+")
+
+
+def redact_text(value):
+    if value is None:
+        return None
+    value = QUERY.sub(r"\\1?[REDACTED]", value)
+    value = BEARER.sub(r"\\1[REDACTED]", value)
+    value = KEY_VALUE.sub(lambda m: m.group(1) + "=[REDACTED]", value)
+    return EMAIL.sub("[REDACTED_EMAIL]", value)
+
+
 
 def is_uuid(value):
     try:
@@ -70,7 +87,7 @@ def safe_reply(value):
             if raw is not None:
                 if not isinstance(raw, str) or len(raw) > 256:
                     raise ValueError("invalid item field")
-                fields[name] = raw
+                fields[name] = redact_text(raw) if name in ("name", "detail") else raw
         if not fields.get("id") or not fields.get("kind") or not fields.get("name"):
             raise ValueError("missing entry identity")
         frame = item.get("frame")
@@ -84,7 +101,7 @@ def safe_reply(value):
         if not isinstance(attrs, dict) or len(attrs) > 24:
             raise ValueError("invalid attributes")
         fields["attributes"] = {
-            str(k)[:64]: str(v)[:256]
+            str(k)[:64]: redact_text(str(v)[:256])
             for k, v in attrs.items()
             if isinstance(k, str) and isinstance(v, str)
             and not any(s in k.lower() for s in SENSITIVE)
@@ -100,7 +117,7 @@ def safe_reply(value):
         raise ValueError("invalid reply message")
     return {"schemaVersion": 2, "id": str(uuid.UUID(value["id"])),
             "sessionID": str(uuid.UUID(value["sessionID"])),
-            "success": value["success"], "message": message, "entries": clean}
+            "success": value["success"], "message": redact_text(message), "entries": clean}
 
 
 class DiagnosticsBroker:
