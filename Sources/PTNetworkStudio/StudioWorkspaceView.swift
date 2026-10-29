@@ -57,11 +57,7 @@ struct StudioWorkspaceView: View {
                 case .network:
                     StudioContentView()
                 default:
-                    ContentUnavailableView(
-                        "\(workspace.rawValue) is not connected",
-                        systemImage: workspace.icon,
-                        description: Text("This workspace requires the opt-in PTools diagnostics agent. Network capture remains available without it.")
-                    )
+                    StudioDiagnosticsWorkspaceView(domain: workspace.rawValue.lowercased())
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
