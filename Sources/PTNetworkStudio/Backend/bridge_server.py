@@ -243,6 +243,13 @@ def capture_entry(event):
     }
 
 
+def is_valid_session(raw, sessions):
+    try:
+        return str(uuid.UUID(raw)) in sessions
+    except (ValueError, TypeError, AttributeError):
+        return False
+
+
 class CollectorState:
     """Replay, nonce and sequence state are isolated to this listening process."""
     def __init__(self, token):
@@ -273,14 +280,19 @@ class CollectorState:
             self.diagnostics.expire()
             if path == "/v2/diagnostics/poll":
                 sid = payload.get("sessionID")
-                result = self.diagnostics.poll(sid, self.sessions)
-                return (200, result, None) if result is not None else (403, None, None)
-            if path == "/v2/diagnostics/reply":
+                if not isinstance(sid, str) or not is_valid_session(sid, self.sessions):
+                    return 403, None, None
+                # Long polling must run OUTSIDE CollectorState.lock. Otherwise
+                # authenticated network ACKs and macOS stdin commands starve.
+            elif path == "/v2/diagnostics/reply":
                 try:
                     result = self.diagnostics.accept_reply(payload)
                 except ValueError:
                     return 400, None, None
                 return (200, {"schemaVersion": 2}, result) if result else (409, None, None)
+        if path == "/v2/diagnostics/poll":
+            result = self.diagnostics.poll(sid, self.sessions, wait_seconds=8)
+            return (200, result, None) if result is not None else (403, None, None)
         return 404, None, None
 
     def receive(self, headers, data):
