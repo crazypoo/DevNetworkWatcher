@@ -54,6 +54,55 @@ def valid_host(host):
     return str(address), "IP:" + str(address)
 
 
+def verify_tls_chain(ca_cert, cert):
+    """No listener is advertised before a real leaf-to-CA verification succeeds."""
+    return subprocess.run(
+        ["openssl", "verify", "-CAfile", str(ca_cert), str(cert)],
+        capture_output=True, text=True
+    ).returncode == 0
+
+
+def sign_leaf_with_ca(folder, csr, cert, ca_cert, ca_key, san):
+    """Use OpenSSL CA signing rather than the platform-dependent x509 -req path.
+
+    The on-disk CA stays unchanged, so already trusted iPhones remain trusted.
+    """
+    config = folder / "bridge-signing.cnf"
+    index = folder / "bridge-signing.index"
+    serial = folder / "bridge-signing.serial"
+    index.write_text("")
+    serial.write_text(secrets.token_hex(8).upper() + "\n")
+    config.write_text(
+        "[ca]\ndefault_ca=bridge_ca\n"
+        "[bridge_ca]\n"
+        "database=bridge-signing.index\n"
+        "serial=bridge-signing.serial\n"
+        "new_certs_dir=.\n"
+        "private_key=bridge-root-key.pem\n"
+        "certificate=bridge-root-ca.pem\n"
+        "default_md=sha256\n"
+        "default_days=90\n"
+        "policy=bridge_policy\n"
+        "x509_extensions=bridge_leaf\n"
+        "unique_subject=no\n"
+        "[bridge_policy]\ncommonName=supplied\n"
+        "[bridge_leaf]\n"
+        "basicConstraints=critical,CA:FALSE\n"
+        "keyUsage=critical,digitalSignature,keyEncipherment\n"
+        "extendedKeyUsage=serverAuth\n"
+        f"subjectAltName={san},IP:127.0.0.1,DNS:localhost\n"
+    )
+    try:
+        subprocess.run(["openssl", "ca", "-batch", "-notext",
+                        "-config", config.name, "-in", csr.name,
+                        "-out", cert.name], check=True, cwd=folder,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    finally:
+        for path in (config, index, serial, folder / (index.name + ".attr"),
+                     folder / (serial.name + ".old"), folder / (index.name + ".old")):
+            path.unlink(missing_ok=True)
+
+
 def prepare_identity(folder, hostname="127.0.0.1"):
     folder.mkdir(mode=0o700, parents=True, exist_ok=True)
     os.chmod(folder, 0o700)
@@ -78,25 +127,26 @@ def prepare_identity(folder, hostname="127.0.0.1"):
     renew = not (cert.is_file() and key.is_file() and host_file.is_file()
                  and host_file.read_text() == hostname)
     if not renew:
-        renew = subprocess.run(["openssl", "x509", "-checkend", "86400", "-noout",
-                                "-in", str(cert)], stdout=subprocess.DEVNULL,
-                               stderr=subprocess.DEVNULL).returncode != 0
+        renew = (subprocess.run(["openssl", "x509", "-checkend", "86400", "-noout",
+                                 "-in", str(cert)], stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL).returncode != 0
+                 or not verify_tls_chain(ca_cert, cert))
     if renew:
-        csr, extensions = folder / "bridge.csr", folder / "bridge-leaf.ext"
-        extensions.write_text("basicConstraints=critical,CA:FALSE\n"
-                              "keyUsage=critical,digitalSignature,keyEncipherment\n"
-                              "extendedKeyUsage=serverAuth\n"
-                              f"subjectAltName={san},IP:127.0.0.1,DNS:localhost\n")
-        openssl("req", "-new", "-newkey", "rsa:3072", "-sha256", "-nodes",
-                "-keyout", key, "-out", csr,
-                "-subj", "/CN=DevNetworkWatcher Bridge")
-        openssl("x509", "-req", "-in", csr, "-CA", ca_cert, "-CAkey", ca_key,
-                "-CAcreateserial", "-out", cert, "-days", "90", "-sha256",
-                "-extfile", extensions)
-        os.chmod(key, 0o600)
-        host_file.write_text(hostname)
-        csr.unlink(missing_ok=True)
-        extensions.unlink(missing_ok=True)
+        csr = folder / "bridge.csr"
+        try:
+            openssl("req", "-new", "-newkey", "rsa:3072", "-sha256", "-nodes",
+                    "-keyout", key, "-out", csr,
+                    "-subj", "/CN=DevNetworkWatcher Bridge")
+            sign_leaf_with_ca(folder, csr, cert, ca_cert, ca_key, san)
+            os.chmod(key, 0o600)
+            if not verify_tls_chain(ca_cert, cert):
+                raise RuntimeError("Studio TLS leaf cannot be verified by its Development CA")
+            host_file.write_text(hostname)
+        finally:
+            csr.unlink(missing_ok=True)
+    # Refuse to broadcast a listener that iOS SecureTransport cannot trust.
+    if not verify_tls_chain(ca_cert, cert):
+        raise RuntimeError("Studio TLS certificate chain invalid; re-check the Development CA")
     if not token_file.is_file():
         token_file.write_text(secrets.token_urlsafe(32))
     os.chmod(token_file, 0o600)
