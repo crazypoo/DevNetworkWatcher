@@ -61,7 +61,11 @@ def prepare_identity(folder, hostname="127.0.0.1"):
     ca_cert, ca_key = folder / "bridge-root-ca.pem", folder / "bridge-root-key.pem"
     ca_der = folder / "bridge-root-ca.cer"
     cert, key = folder / "bridge-cert.pem", folder / "bridge-key.pem"
-    host_file, token_file = folder / "bridge-host", folder / "bridge-token"
+    host_file = folder / "bridge-host"
+    # Deliberately migrate the old token filename: it was once copied into
+    # an example app's source and can no longer be considered secret.
+    legacy_token_file = folder / "bridge-token"
+    token_file = folder / "bridge-token-v2"
 
     if not ca_cert.is_file() or not ca_key.is_file():
         openssl("req", "-x509", "-newkey", "rsa:3072", "-sha256", "-nodes",
@@ -95,7 +99,8 @@ def prepare_identity(folder, hostname="127.0.0.1"):
         extensions.unlink(missing_ok=True)
     if not token_file.is_file():
         token_file.write_text(secrets.token_urlsafe(32))
-        os.chmod(token_file, 0o600)
+    os.chmod(token_file, 0o600)
+    legacy_token_file.unlink(missing_ok=True)
     token = token_file.read_text().strip()
     pin = hashlib.sha256(ssl.PEM_cert_to_DER_cert(cert.read_text())).hexdigest()
     return cert, key, token, pin, ca_der

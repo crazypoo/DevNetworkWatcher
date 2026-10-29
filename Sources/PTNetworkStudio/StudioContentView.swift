@@ -366,7 +366,7 @@ private struct SetupGuide: View {
             Text("2. Configure the target app/browser proxy: 127.0.0.1:9090. HTTP and HTTPS will pass through mitmproxy.")
             Text("3. To decrypt HTTPS, open CA from the toolbar. Add mitmproxy-ca-cert.pem to your login Keychain and explicitly mark it trusted for SSL in Keychain Access. Trust this CA only on devices you control. It can intercept secure traffic.")
             Text("4. Rules → Add Rule for request/response Rewrite, Map Local or Breakpoint; select a paused request and use Resolve.")
-            Text("5. iPhone → Start Bridge for an opt-in encrypted SDK capture stream (separate from HTTP proxy); copy the adapter into PTools DebugNetwork.")
+            Text("5. iPhone → Start Bridge for an opt-in encrypted SDK capture stream (separate from HTTP proxy); explicitly enable the optional PToolsDebugStudioBridge module from your Debug UI. Do not copy the obsolete adapter or hard-code pairing credentials.")
             Text("6. A third-party iPhone HTTPS proxy requires a LAN-reachable listener, Wi-Fi proxy authentication, and device trust of the mitmproxy CA. This build defaults to loopback and does not change system proxy settings.")
             Text("Security: capture only traffic that you own or are authorized to inspect. Sensitive fields are redacted in UI and export. Certificate-pinned clients cannot be forced to trust interception.")
                 .font(.caption).foregroundStyle(.orange)

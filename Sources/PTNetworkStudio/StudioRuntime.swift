@@ -216,6 +216,7 @@ final class StudioMitmEngine {
 
 @MainActor
 final class StudioBridgeController: ObservableObject {
+    @Published private(set) var isStarting = false
     @Published var isRunning = false
     @Published var token = ""
     @Published var fingerprint = ""
@@ -225,17 +226,23 @@ final class StudioBridgeController: ObservableObject {
     private var process: Process?
     private var reader: StudioProcessReader?
     private var output: Pipe?
+    private var runID: UUID?
     var onEntry: ((CaptureEntry) -> Void)?
     var onDelete: ((UUID) -> Void)?
     var onReset: (() -> Void)?
 
     func start(host: String) {
-        guard !isRunning else { return }
+        // Startup is asynchronous: prevent a second click from spawning a
+        // competing collector before the first bridgeReady message arrives.
+        guard !isRunning, !isStarting, process == nil else { return }
         guard !host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             self.error = "Enter a reachable Mac LAN IP before starting the bridge."
             return
         }
         self.error = nil
+        self.isStarting = true
+        self.token = ""
+        self.fingerprint = ""
         do {
             guard let python = StudioPaths.executable(env: "PTSTUDIO_PYTHON", choices: [
                 "/usr/bin/python3", "/opt/homebrew/bin/python3", "/usr/local/bin/python3"
@@ -247,12 +254,14 @@ final class StudioBridgeController: ObservableObject {
             let pipe = Pipe()
             p.standardOutput = pipe
             p.standardError = pipe
+            let launchedRunID = UUID()
             let reader = StudioProcessReader { [weak self] message in
                 Task { @MainActor in
-                    guard let self else { return }
+                    guard let self, self.runID == launchedRunID else { return }
                     if let type = message["type"] as? String, type == "bridgeReady" {
                         self.token = message["token"] as? String ?? ""
                         self.fingerprint = message["fingerprint"] as? String ?? ""
+                        self.isStarting = false
                         self.isRunning = true
                     } else if let type = message["type"] as? String, type == "entry",
                               let raw = message["entry"],
@@ -269,23 +278,57 @@ final class StudioBridgeController: ObservableObject {
                 }
             }
             reader.attach(pipe)
-            try p.run()
             self.reader = reader
             self.output = pipe
             self.process = p
-            p.terminationHandler = { [weak self] _ in Task { @MainActor in self?.isRunning = false } }
+            self.runID = launchedRunID
+            // Register before run(): a fast Python exit (bad IP/occupied port)
+            // must not leave the UI stuck in Starting.
+            p.terminationHandler = { [weak self] ended in
+                let exitCode = Int(ended.terminationStatus)
+                Task { @MainActor in
+                    guard let self, self.runID == launchedRunID else { return }
+                    self.stop()
+                    self.error = "Bridge exited (code \(exitCode)). Check TCP 9453, the Mac firewall, Python and the configured LAN IP."
+                }
+            }
+            try p.run()
         } catch {
+            stop()
             self.error = error.localizedDescription
-            self.isRunning = false
         }
     }
 
     func stop() {
+        // Invalidate the run first so late stdout/termination callbacks cannot
+        // restart or overwrite the state of a new bridge instance.
+        runID = nil
         if let p = process, p.isRunning { p.terminate() }
         output?.fileHandleForReading.readabilityHandler = nil
         output = nil
         reader = nil
         process = nil
+        isStarting = false
         isRunning = false
+        token = ""
+        fingerprint = ""
+    }
+
+    /// Revoke a leaked or stale pairing token while no collector is listening.
+    func rotatePairingToken() {
+        guard !isRunning, !isStarting, process == nil else {
+            self.error = "Stop the Bridge before rotating its pairing token."
+            return
+        }
+        do {
+            let tokenFile = StudioPaths.bridge.appendingPathComponent("bridge-token-v2")
+            if FileManager.default.fileExists(atPath: tokenFile.path) {
+                try FileManager.default.removeItem(at: tokenFile)
+            }
+            token = ""
+            error = nil
+        } catch {
+            self.error = error.localizedDescription
+        }
     }
 }

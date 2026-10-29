@@ -14,7 +14,7 @@ import uuid
 
 BACKEND = Path(__file__).resolve().parents[2] / "Sources" / "PTNetworkStudio" / "Backend"
 sys.path.insert(0, str(BACKEND))
-from bridge_server import CollectorState
+from bridge_server import CollectorState, prepare_identity
 
 
 def sample_event(kind, sequence, session, request_id=None):
@@ -49,6 +49,19 @@ def headers(token, nonce=None, timestamp=None):
 
 
 class BridgeProtocolTests(unittest.TestCase):
+    def test_exposed_legacy_token_is_rotated_once(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            legacy = root / "bridge-token"
+            legacy.write_text("previously-published-token")
+            _, _, token, fingerprint, _ = prepare_identity(root)
+            self.assertNotEqual(token, "previously-published-token")
+            self.assertFalse(legacy.exists())
+            self.assertEqual((root / "bridge-token-v2").read_text().strip(), token)
+            _, _, subsequent, subsequent_pin, _ = prepare_identity(root)
+            self.assertEqual(subsequent, token)
+            self.assertEqual(subsequent_pin, fingerprint)
+
     def test_batch_ack_idempotent_retry_nonce_and_privacy(self):
         state = CollectorState("a" * 32)
         session = str(uuid.uuid4())
@@ -107,6 +120,14 @@ class BridgeProtocolTests(unittest.TestCase):
                 ready = json.loads(line[len("PTSTUDIO:"):])
                 self.assertEqual(ready["port"], port)
                 root_pem = str(Path(ready["caCertificate"]).with_suffix(".pem"))
+                # Diagnose certificate-chain incompatibilities on macOS Python,
+                # rather than treating a TLS handshake failure as an ACK bug.
+                verification = subprocess.run(
+                    ["openssl", "verify", "-CAfile", root_pem,
+                     str(Path(folder) / "bridge-cert.pem")],
+                    capture_output=True, text=True)
+                self.assertEqual(verification.returncode, 0,
+                                 verification.stdout + verification.stderr)
                 trusted = ssl.create_default_context(cafile=root_pem)
                 connection = http.client.HTTPSConnection("127.0.0.1", port, context=trusted, timeout=5)
                 connection.connect()
