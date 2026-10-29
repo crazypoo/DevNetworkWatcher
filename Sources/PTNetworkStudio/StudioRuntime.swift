@@ -222,6 +222,9 @@ final class StudioBridgeController: ObservableObject {
     @Published var fingerprint = ""
     @Published private(set) var tlsHost = ""
     @Published private(set) var lastAuthenticatedPeerAt: Date?
+    /// Ephemeral session UUIDs only; never a device hardware identifier.
+    @Published private(set) var authenticatedSessions: [UUID: Date] = [:]
+    @Published private(set) var receivedBridgeEntries = 0
     @Published var error: String?
     let port = 9453
 
@@ -246,6 +249,8 @@ final class StudioBridgeController: ObservableObject {
         self.isStarting = true
         self.token = ""
         self.fingerprint = ""
+        self.authenticatedSessions = [:]
+        self.receivedBridgeEntries = 0
         do {
             guard let python = StudioPaths.executable(env: "PTSTUDIO_PYTHON", choices: [
                 "/usr/bin/python3", "/opt/homebrew/bin/python3", "/usr/local/bin/python3"
@@ -273,13 +278,21 @@ final class StudioBridgeController: ObservableObject {
                         }
                         self.advertiser = advertiser
                         advertiser.start()
-                    } else if message["type"] as? String == "bridgePeer" {
-                        // Emitted only after a successful authenticated hello batch.
-                        self.lastAuthenticatedPeerAt = Date()
+                    } else if message["type"] as? String == "bridgePeer",
+                              let raw = message["sessionID"] as? String,
+                              let sessionID = UUID(uuidString: raw) {
+                        // Collector emits this only on authenticated hello/heartbeat.
+                        let now = Date()
+                        self.lastAuthenticatedPeerAt = now
+                        self.authenticatedSessions = self.authenticatedSessions.filter {
+                            now.timeIntervalSince($0.value) < 120
+                        }
+                        self.authenticatedSessions[sessionID] = now
                     } else if let type = message["type"] as? String, type == "entry",
                               let raw = message["entry"],
                               let data = try? JSONSerialization.data(withJSONObject: raw),
                               let entry = try? JSONDecoder().decode(CaptureEntry.self, from: data) {
+                        self.receivedBridgeEntries += 1
                         self.onEntry?(entry)
                     } else if message["type"] as? String == "bridgeDelete",
                               let raw = message["requestID"] as? String,
@@ -301,8 +314,9 @@ final class StudioBridgeController: ObservableObject {
                 let exitCode = Int(ended.terminationStatus)
                 Task { @MainActor in
                     guard let self, self.runID == launchedRunID else { return }
+                    let reportedFailure = self.error
                     self.stop()
-                    self.error = "Bridge exited (code \(exitCode)). Check TCP 9453, the Mac firewall, Python and the configured LAN IP."
+                    self.error = reportedFailure ?? "Bridge exited (code \(exitCode)). Check TCP 9453, the firewall, Python and the TLS certificate chain."
                 }
             }
             try p.run()
@@ -329,6 +343,8 @@ final class StudioBridgeController: ObservableObject {
         fingerprint = ""
         tlsHost = ""
         lastAuthenticatedPeerAt = nil
+        authenticatedSessions = [:]
+        receivedBridgeEntries = 0
     }
 
     /// Revoke a leaked or stale pairing token while no collector is listening.

@@ -29,6 +29,12 @@ struct StudioContentView: View {
     @StateObject private var bridge = StudioBridgeController()
     @AppStorage("PTStudio.autoStartBridge") private var autoStartBridge = false
 
+    private func liveSessionCount(at time: Date) -> Int {
+        bridge.authenticatedSessions.values.filter {
+            time.timeIntervalSince($0) < 80
+        }.count
+    }
+
     private var hosts: [HostCount] {
         let groups = Dictionary(grouping: store.entries, by: \.host)
         return groups.map { HostCount(name: $0.key, count: $0.value.count) }.sorted { $0.count == $1.count ? $0.name < $1.name : $0.count > $1.count }
@@ -100,7 +106,13 @@ struct StudioContentView: View {
                 } label: { Label("Session", systemImage: "square.and.arrow.up") }
                 Button { showProxySettings = true } label: { Label("Network", systemImage: "network") }
                 Button { showRules = true } label: { Label("Rules", systemImage: "line.3.horizontal.decrease.circle") }
-                Button { showBridge = true } label: { Label("iPhone", systemImage: "iphone.gen3.radiowaves.left.and.right") }
+                Button { showBridge = true } label: {
+                    Label(bridge.isRunning ? "iPhone Bridge On" : "iPhone Bridge Off",
+                          systemImage: bridge.isRunning ? "iphone.radiowaves.left.and.right" : "iphone")
+                }
+                .help(bridge.isRunning
+                      ? "Secure Bridge listening on TCP \(bridge.port). Open to inspect authenticated sessions."
+                      : "Open iPhone Bridge settings to start authenticated PTools capture.")
                 Button {
                     NSWorkspace.shared.activateFileViewerSelecting([StudioPaths.certificates.appendingPathComponent("mitmproxy-ca-cert.pem")])
                 } label: { Label("CA", systemImage: "checkmark.shield") }
@@ -170,6 +182,40 @@ struct StudioContentView: View {
                 }.padding(.bottom, 18)
             }
             Spacer(minLength: 0)
+            TimelineView(.periodic(from: .now, by: 10)) { timeline in
+                VStack(alignment: .leading, spacing: 7) {
+                    HStack {
+                        Image(systemName: "iphone.radiowaves.left.and.right")
+                        Text("PTOOLS BRIDGE").fontWeight(.bold)
+                        Spacer()
+                        Circle()
+                            .fill(liveSessionCount(at: timeline.date) > 0 ? Color.green
+                                  : bridge.isRunning ? Color.orange : Color.gray)
+                            .frame(width: 8, height: 8)
+                    }
+                    Text(bridge.isStarting ? "Starting secure listener…"
+                         : !bridge.isRunning ? "Stopped"
+                         : liveSessionCount(at: timeline.date) > 0
+                            ? "\(liveSessionCount(at: timeline.date)) authenticated session(s)"
+                            : "Listening • no authenticated client")
+                        .foregroundStyle(.secondary)
+                    Text("PTools events: \(bridge.receivedBridgeEntries)")
+                        .foregroundStyle(.secondary)
+                    if let last = bridge.lastAuthenticatedPeerAt {
+                        Text("Last authenticated: \(last.formatted(date: .omitted, time: .standard))")
+                            .foregroundStyle(.secondary)
+                    }
+                    if let error = bridge.error {
+                        Text(error).foregroundStyle(.orange).lineLimit(3)
+                    }
+                    Button("Bridge settings") { showBridge = true }
+                        .buttonStyle(.link)
+                }
+                .font(.caption)
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            Divider()
             VStack(alignment: .leading, spacing: 7) {
                 Label(store.exposeToLAN ? "LAN proxy: password required" : "Localhost proxy", systemImage: "lock.fill")
                     .foregroundStyle(.secondary).font(.caption)
@@ -232,7 +278,10 @@ struct StudioContentView: View {
             .padding(.horizontal, 16).padding(.vertical, 9)
             Divider()
             if filteredEntries.isEmpty {
-                ContentUnavailableView("No traffic yet", systemImage: "network", description: Text("Start capture, then configure an app's HTTP/HTTPS proxy to 127.0.0.1:\(port)."))
+                ContentUnavailableView("No traffic yet", systemImage: "network",
+                    description: Text(bridge.isRunning
+                        ? "Bridge is listening. Pair your Debug iPhone, confirm an authenticated session in the left sidebar, and make an app network request. The Capture button only controls the separate HTTP proxy."
+                        : "For PTools Debug traffic, open iPhone and start the secure Bridge. The Capture button controls the separate HTTP proxy at 127.0.0.1:\(port)."))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 List(selection: $selectedID) {
