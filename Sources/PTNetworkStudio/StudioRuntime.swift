@@ -228,7 +228,7 @@ final class StudioBridgeController: ObservableObject {
     @Published var error: String?
     @Published private(set) var diagnosticResults: [String: StudioDiagnosticReply] = [:]
     @Published private(set) var diagnosticRevision = 0
-    private var pendingDiagnosticDomains: [UUID: String] = [:]
+    private var pendingDiagnosticDomains: [UUID: (domain: String, created: Date)] = [:]
     private var input: Pipe?
     let port = 9453
 
@@ -312,9 +312,9 @@ final class StudioBridgeController: ObservableObject {
                               let data = try? JSONSerialization.data(withJSONObject: raw),
                               let reply = try? JSONDecoder().decode(StudioDiagnosticReply.self, from: data),
                               reply.schemaVersion == 2,
-                              let domain = self.pendingDiagnosticDomains.removeValue(forKey: reply.id),
+                              let pending = self.pendingDiagnosticDomains.removeValue(forKey: reply.id),
                               self.authenticatedSessions[reply.sessionID] != nil {
-                        self.diagnosticResults[domain] = reply
+                        self.diagnosticResults[pending.domain] = reply
                         self.diagnosticRevision += 1
                     } else if message["type"] as? String == "diagnosticRejected" {
                         self.error = message["reason"] as? String ?? "Diagnostic request refused"
@@ -374,10 +374,12 @@ final class StudioBridgeController: ObservableObject {
     @discardableResult
     func sendDiagnostic(domain: String, operation: String,
                         targetID: String? = nil, arguments: [String: String] = [:]) -> Bool {
-        guard isRunning, let input,
-              let session = authenticatedSessions
-                .filter({ Date().timeIntervalSince($0.value) < 100 })
-                .sorted(by: { $0.value > $1.value }).first?.key,
+        pendingDiagnosticDomains = pendingDiagnosticDomains.filter {
+            Date().timeIntervalSince($0.value.created) < 50
+        }
+        let live = authenticatedSessions.filter { Date().timeIntervalSince($0.value) < 100 }
+        // Do not guess which device to mutate when multiple Debug iPhones are paired.
+        guard isRunning, let input, live.count == 1, let session = live.first?.key,
               pendingDiagnosticDomains.count < 32 else { return false }
         let request = StudioDiagnosticCommand(
             id: UUID(), sessionID: session, domain: domain,
@@ -386,7 +388,7 @@ final class StudioBridgeController: ObservableObject {
               data.count < 8192 else { return false }
         do {
             try input.fileHandleForWriting.write(contentsOf: data + Data([10]))
-            pendingDiagnosticDomains[request.id] = domain
+            pendingDiagnosticDomains[request.id] = (domain: domain, created: Date())
             return true
         } catch {
             self.error = error.localizedDescription
