@@ -272,6 +272,12 @@ final class StudioBridgeController: ObservableObject {
             self.input = commandPipe
             let launchedRunID = UUID()
             let reader = StudioProcessReader { [weak self] message in
+                let decodedEntry: CaptureEntry? = {
+                    guard message["type"] as? String == "entry",
+                          let raw = message["entry"],
+                          let data = try? JSONSerialization.data(withJSONObject: raw) else { return nil }
+                    return try? JSONDecoder().decode(CaptureEntry.self, from: data)
+                }()
                 Task { @MainActor in
                     guard let self, self.runID == launchedRunID else { return }
                     if let type = message["type"] as? String, type == "bridgeReady" {
@@ -296,10 +302,8 @@ final class StudioBridgeController: ObservableObject {
                             now.timeIntervalSince($0.value) < 120
                         }
                         self.authenticatedSessions[sessionID] = now
-                    } else if let type = message["type"] as? String, type == "entry",
-                              let raw = message["entry"],
-                              let data = try? JSONSerialization.data(withJSONObject: raw),
-                              let entry = try? JSONDecoder().decode(CaptureEntry.self, from: data) {
+                    } else if message["type"] as? String == "entry",
+                              let entry = decodedEntry {
                         self.receivedBridgeEntries += 1
                         self.onEntry?(entry)
                     } else if message["type"] as? String == "bridgeDelete",
