@@ -250,6 +250,7 @@ class CollectorState:
         self.nonces = {}
         self.sessions = {}
         self.diagnostic_sessions = set()
+        self.diagnostic_last_seen = {}
         self.diagnostic_pending = {}
 
     def authorize_diagnostic(self, headers):
@@ -309,17 +310,25 @@ class CollectorState:
         except (ValueError, TypeError, KeyError):
             return 400, None, []
         with self.lock:
+            now = time.monotonic()
+            # A closed/restarted iPhone session must not remain selectable forever.
+            expired = [key for key, seen in self.diagnostic_last_seen.items() if now - seen > 90]
+            for key in expired:
+                self.diagnostic_sessions.discard(key)
+                self.diagnostic_last_seen.pop(key, None)
             new_session = sid not in self.diagnostic_sessions
             if new_session and len(self.diagnostic_sessions) >= 16:
                 return 429, None, []
+            previously_seen = self.diagnostic_last_seen.get(sid, 0)
             self.diagnostic_sessions.add(sid)
-            now = time.monotonic()
+            self.diagnostic_last_seen[sid] = now
+            should_notify = new_session or now - previously_seen > 10
             commands = []
             for pending in self.diagnostic_pending.values():
                 if pending["sessionID"] == sid and now - pending["lastSent"] >= 5 and len(commands) < 16:
                     commands.append(pending["command"])
                     pending["lastSent"] = now
-        events = [{"type": "diagnosticPeer", "sessionID": sid}] if new_session else []
+        events = [{"type": "diagnosticPeer", "sessionID": sid}] if should_notify else []
         return 200, {"commands": commands}, events
 
     def diagnostic_reply(self, headers, body):

@@ -47,6 +47,19 @@ struct StudioWorkspaceView: View {
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("workspace.\(item.rawValue.lowercased())")
                 }
+                if !bridge.diagnosticSessions.isEmpty {
+                    Text("Remote agents").font(.caption.bold()).padding(.horizontal, 12)
+                    ForEach(bridge.diagnosticSessions.keys.sorted(by: { $0.uuidString < $1.uuidString }), id: \.self) { session in
+                        Button {
+                            diagnostics.selectedSessionID = session
+                        } label: {
+                            HStack {
+                                Image(systemName: diagnostics.selectedSessionID == session ? "checkmark.circle.fill" : "iphone")
+                                Text(String(session.uuidString.prefix(8)))
+                            }.font(.caption)
+                        }.buttonStyle(.plain).padding(.horizontal, 12)
+                    }
+                }
                 Spacer()
                 Text(bridge.isRunning ? "Secure bridge active" : "Bridge not running")
                     .font(.caption2).foregroundStyle(.secondary).padding(12)
