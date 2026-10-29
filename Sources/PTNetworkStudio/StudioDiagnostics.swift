@@ -105,7 +105,9 @@ struct StudioDiagnosticsWorkspaceView: View {
                                 if !previousIDs.isEmpty && !previousIDs.contains(entry.id) {
                                     Image(systemName: "plus.circle.fill").foregroundStyle(.green)
                                 }
-                            }.tag(entry.id)
+                            }
+                            .padding(.leading, domain == "inspector" ? CGFloat(min(14, hierarchyDepth(entry)) * 10) : 0)
+                            .tag(entry.id)
                         }
                     }
                     .frame(minWidth: 310)
@@ -116,7 +118,7 @@ struct StudioDiagnosticsWorkspaceView: View {
                                 Text(message).font(.caption).foregroundStyle(.secondary)
                             }
                             if domain == "inspector" {
-                                if viewing3D { perspective }
+                                perspective
                                 if let entry = selected {
                                     Text(entry.name).font(.headline)
                                     if let frame = entry.frame {
@@ -209,9 +211,22 @@ struct StudioDiagnosticsWorkspaceView: View {
             }
         }
         .frame(height: 230)
-        .rotation3DEffect(.degrees(42), axis: (x: 1, y: -0.4, z: 0))
+        .rotation3DEffect(.degrees(viewing3D ? 42 : 0), axis: (x: 1, y: -0.4, z: 0))
         .padding(.vertical, 35)
         .accessibilityLabel("View hierarchy perspective preview")
+    }
+
+    private func hierarchyDepth(_ entry: StudioDiagnosticEntry) -> Int {
+        let parents = Dictionary(uniqueKeysWithValues: entries.map { ($0.id, $0.parentID) })
+        var parent = entry.parentID
+        var seen: Set<String> = []
+        var depth = 0
+        while let value = parent, depth < 20, !seen.contains(value) {
+            seen.insert(value)
+            depth += 1
+            parent = parents[value] ?? nil
+        }
+        return depth
     }
 
     private func request(_ operation: String, target: String? = nil, args: [String: String] = [:]) {
