@@ -50,6 +50,7 @@ final class StudioDiagnosticStore: ObservableObject {
     @Published private(set) var inspector: [StudioDiagnosticEntry] = []
     @Published private(set) var lastError: String?
     @Published private(set) var lastAction: String?
+    @Published private(set) var lastUndoID: String?
     @Published private(set) var latest: [String: [StudioDiagnosticEntry]] = [:]
     private var pending: [UUID: String] = [:]
 
@@ -76,6 +77,15 @@ final class StudioDiagnosticStore: ObservableObject {
         if reply.success {
             latest[action] = reply.entries
             if action == "inspector.snapshot" { inspector = reply.entries }
+            if action == "inspector.setProperty" { lastUndoID = reply.id.uuidString }
+            if action == "inspector.revert" { lastUndoID = nil }
+            if action.hasPrefix("inspector."), action != "inspector.snapshot" {
+                for entry in reply.entries {
+                    if let index = inspector.firstIndex(where: { $0.id == entry.id }) {
+                        inspector[index] = entry
+                    }
+                }
+            }
             lastError = nil
             lastAction = action + " completed (" + String(reply.entries.count) + " entries)"
         } else {
