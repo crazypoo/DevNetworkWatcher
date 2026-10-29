@@ -34,8 +34,8 @@ QUERY = re.compile(r"(?i)(https?://[^\s?#]+)\?[^\s#]+")
 def redact_text(value):
     if value is None:
         return None
-    value = QUERY.sub(r"\\1?[REDACTED]", value)
-    value = BEARER.sub(r"\\1[REDACTED]", value)
+    value = QUERY.sub(r"\1?[REDACTED]", value)
+    value = BEARER.sub(r"\1[REDACTED]", value)
     value = KEY_VALUE.sub(lambda m: m.group(1) + "=[REDACTED]", value)
     return EMAIL.sub("[REDACTED_EMAIL]", value)
 

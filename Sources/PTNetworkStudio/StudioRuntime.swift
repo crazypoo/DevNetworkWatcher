@@ -296,6 +296,14 @@ final class StudioBridgeController: ObservableObject {
                               let raw = message["sessionID"] as? String,
                               let sessionID = UUID(uuidString: raw) {
                         // Collector emits this only on authenticated hello/heartbeat.
+                        // A newly authenticated iPhone must never inherit another
+                        // session's Inspector/Storage/Console cached snapshots.
+                        if self.diagnosticResults.values.contains(where: { $0.sessionID != sessionID }) {
+                            self.diagnosticResults.removeAll()
+                            self.diagnosticFingerprints.removeAll()
+                            self.pendingDiagnosticDomains.removeAll()
+                            self.diagnosticRevision += 1
+                        }
                         let now = Date()
                         self.lastAuthenticatedPeerAt = now
                         self.authenticatedSessions = self.authenticatedSessions.filter {
