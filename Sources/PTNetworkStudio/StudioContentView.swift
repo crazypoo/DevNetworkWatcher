@@ -44,8 +44,8 @@ struct StudioContentView: View {
 
     private var filteredEntries: [CaptureEntry] { visibleEntries }
 
-    private func refreshVisibleEntries() {
-        visibleEntries = store.entries.filter { item in
+    private func refreshVisibleEntries(from snapshot: [CaptureEntry]? = nil) {
+        visibleEntries = (snapshot ?? store.entries).filter { item in
             let scopeMatches: Bool
             switch scope {
             case .all: scopeMatches = true
@@ -71,9 +71,10 @@ struct StudioContentView: View {
         }
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear { refreshVisibleEntries() }
-        .onReceive(store.$entries) { _ in
-            // Network updates are batched by CaptureStore; only filter once per published batch.
-            refreshVisibleEntries()
+        .onReceive(store.$entries) { snapshot in
+            // @Published emits in willSet; use the delivered snapshot, never the
+            // potentially stale store.entries while the property is updating.
+            refreshVisibleEntries(from: snapshot)
         }
         .onChange(of: scope) { _ in refreshVisibleEntries() }
         .onChange(of: search) { newSearch in
