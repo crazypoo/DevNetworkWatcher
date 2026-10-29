@@ -93,6 +93,43 @@ class DiagnosticsTests(unittest.TestCase):
                       "hunter2", "EXPOSED_QUERY"):
             self.assertNotIn(value, serialized)
 
+    def test_long_poll_never_holds_v1_collector_lock(self):
+        token = "t" * 32
+        sid = str(uuid.uuid4())
+        state = CollectorState(token)
+        state.sessions[sid] = {"last": 1, "ids": {}}
+        poll_entered = threading.Event()
+        original_poll = state.diagnostics.poll
+
+        def observed_poll(*args, **kwargs):
+            poll_entered.set()
+            return original_poll(*args, **kwargs)
+
+        state.diagnostics.poll = observed_poll
+        response = []
+
+        def run_poll():
+            response.append(state.diagnostic_request(
+                make_headers(token), "/v2/diagnostics/poll",
+                json.dumps({"sessionID": sid}).encode()))
+
+        worker = threading.Thread(target=run_poll)
+        worker.start()
+        try:
+            self.assertTrue(poll_entered.wait(timeout=1))
+            acquired = state.lock.acquire(timeout=0.2)
+            try:
+                self.assertTrue(acquired, "long poll must release the network v1 lock")
+            finally:
+                if acquired:
+                    state.lock.release()
+            self.assertTrue(state.diagnostics.enqueue(make_command(sid), state.sessions))
+        finally:
+            worker.join(timeout=1.5)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(response[0][0], 200)
+        self.assertEqual(len(response[0][1]["commands"]), 1)
+
     def test_replay_token_and_nonce_required_without_touching_v1(self):
         token = "a" * 32
         sid = str(uuid.uuid4())
