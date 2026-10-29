@@ -229,6 +229,7 @@ final class StudioBridgeController: ObservableObject {
     @Published private(set) var diagnosticResults: [String: StudioDiagnosticReply] = [:]
     @Published private(set) var diagnosticRevision = 0
     private var pendingDiagnosticDomains: [UUID: (domain: String, created: Date)] = [:]
+    private var diagnosticFingerprints: [String: String] = [:]
     private var input: Pipe?
     let port = 9453
 
@@ -314,7 +315,13 @@ final class StudioBridgeController: ObservableObject {
                               reply.schemaVersion == 2,
                               let pending = self.pendingDiagnosticDomains.removeValue(forKey: reply.id),
                               self.authenticatedSessions[reply.sessionID] != nil {
-                        // Highlight/edit/undo return an acknowledgement without a new tree.
+                        if reply.success, let message = reply.message {
+                            if message.hasPrefix("fingerprint:") || message.hasPrefix("unchanged:") {
+                                self.diagnosticFingerprints[pending.domain] =
+                                    String(message.split(separator: ":", maxSplits: 1).last ?? "")
+                            }
+                        }
+                        // Highlight/edit/undo and unchanged snapshots contain no new tree.
                         // Preserve the previous snapshot until the user selects Refresh.
                         if reply.entries.isEmpty,
                            let previous = self.diagnosticResults[pending.domain] {
@@ -368,6 +375,7 @@ final class StudioBridgeController: ObservableObject {
         reader = nil
         process = nil
         pendingDiagnosticDomains.removeAll()
+        diagnosticFingerprints.removeAll()
         diagnosticResults.removeAll()
         diagnosticRevision += 1
         isStarting = false
@@ -391,9 +399,13 @@ final class StudioBridgeController: ObservableObject {
         // Do not guess which device to mutate when multiple Debug iPhones are paired.
         guard isRunning, let input, live.count == 1, let session = live.first?.key,
               pendingDiagnosticDomains.count < 32 else { return false }
+        var effectiveArguments = arguments
+        if operation == "snapshot", let fingerprint = diagnosticFingerprints[domain] {
+            effectiveArguments["knownFingerprint"] = fingerprint
+        }
         let request = StudioDiagnosticCommand(
             id: UUID(), sessionID: session, domain: domain,
-            operation: operation, targetID: targetID, arguments: arguments)
+            operation: operation, targetID: targetID, arguments: effectiveArguments)
         guard let data = try? JSONEncoder().encode(request),
               data.count < 8192 else { return false }
         do {
