@@ -249,6 +249,101 @@ class CollectorState:
         self.lock = threading.Lock()
         self.nonces = {}
         self.sessions = {}
+        self.diagnostic_sessions = set()
+        self.diagnostic_pending = {}
+
+    def authorize_diagnostic(self, headers):
+        """Same bearer, nonce and timestamp rules as the existing event collector."""
+        if not secrets.compare_digest(headers.get("Authorization", ""), "Bearer " + self.token):
+            return False
+        try:
+            nonce = as_uuid(headers.get("X-PTStudio-Nonce"))
+            sent_at = int(headers.get("X-PTStudio-Sent-At", ""))
+        except (ValueError, TypeError):
+            return False
+        now = int(time.time())
+        if abs(now - sent_at) > NONCE_TTL:
+            return False
+        with self.lock:
+            self.nonces = {n: expiry for n, expiry in self.nonces.items() if expiry > now}
+            if nonce in self.nonces:
+                return False
+            self.nonces[nonce] = now + NONCE_TTL
+        return True
+
+    def enqueue_diagnostic(self, command):
+        try:
+            if not isinstance(command, dict) or command.get("schemaVersion") != 2:
+                return False
+            sid, cid = as_uuid(command.get("sessionID")), as_uuid(command.get("id"))
+            if command.get("domain") not in {"inspector", "storage", "defaults", "database", "logging", "performance"}:
+                return False
+            if not isinstance(command.get("operation"), str) or len(command["operation"]) > 50:
+                return False
+            if command.get("targetID") is not None and (
+                not isinstance(command["targetID"], str) or len(command["targetID"]) > 200
+            ):
+                return False
+            args = command.get("arguments")
+            if not isinstance(args, dict) or len(args) > 24 or any(
+                not isinstance(k, str) or not isinstance(v, str) or len(k) > 80 or len(v) > 4096
+                for k, v in args.items()
+            ):
+                return False
+        except (ValueError, TypeError, KeyError):
+            return False
+        with self.lock:
+            if sid not in self.diagnostic_sessions or cid in self.diagnostic_pending:
+                return False
+            if len(self.diagnostic_pending) >= 128:
+                return False
+            self.diagnostic_pending[cid] = {"sessionID": sid, "command": command, "lastSent": 0}
+        return True
+
+    def poll_diagnostic(self, headers, body):
+        if not self.authorize_diagnostic(headers):
+            return 401, None, []
+        try:
+            payload = json.loads(body)
+            sid = as_uuid(payload["sessionID"])
+        except (ValueError, TypeError, KeyError):
+            return 400, None, []
+        with self.lock:
+            new_session = sid not in self.diagnostic_sessions
+            if new_session and len(self.diagnostic_sessions) >= 16:
+                return 429, None, []
+            self.diagnostic_sessions.add(sid)
+            now = time.monotonic()
+            commands = []
+            for pending in self.diagnostic_pending.values():
+                if pending["sessionID"] == sid and now - pending["lastSent"] >= 5 and len(commands) < 16:
+                    commands.append(pending["command"])
+                    pending["lastSent"] = now
+        events = [{"type": "diagnosticPeer", "sessionID": sid}] if new_session else []
+        return 200, {"commands": commands}, events
+
+    def diagnostic_reply(self, headers, body):
+        if not self.authorize_diagnostic(headers):
+            return 401, None, []
+        try:
+            response = json.loads(body)
+            if not isinstance(response, dict) or response.get("schemaVersion") != 2:
+                raise ValueError("Invalid schema")
+            cid, sid = as_uuid(response["id"]), as_uuid(response["sessionID"])
+            if type(response.get("success")) is not bool or not isinstance(response.get("entries"), list):
+                raise ValueError("Invalid reply")
+            if len(response["entries"]) > 4096:
+                raise ValueError("Too many entries")
+            if response.get("message") is not None and not isinstance(response["message"], str):
+                raise ValueError("Invalid message")
+        except (ValueError, TypeError, KeyError):
+            return 400, None, []
+        with self.lock:
+            pending = self.diagnostic_pending.get(cid)
+            if not pending or pending["sessionID"] != sid:
+                return 409, None, []
+            del self.diagnostic_pending[cid]
+        return 200, {"accepted": True}, [{"type": "diagnosticReply", "reply": response}]
 
     def receive(self, headers, data):
         if not secrets.compare_digest(headers.get("Authorization", ""),
@@ -350,7 +445,7 @@ def make_handler(state):
                 self.wfile.write(body)
 
         def do_POST(self):
-            if self.path != "/v1/events":
+            if self.path not in ("/v1/events", "/v2/diagnostics/poll", "/v2/diagnostics/reply"):
                 self.reply(404)
                 return
             if self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower() != "application/json":
@@ -364,11 +459,31 @@ def make_handler(state):
             if not 0 < size <= MAX_PAYLOAD:
                 self.reply(413)
                 return
-            status, ack, events = state.receive(self.headers, self.rfile.read(size))
+            payload = self.rfile.read(size)
+            if self.path == "/v1/events":
+                status, ack, events = state.receive(self.headers, payload)
+            elif self.path == "/v2/diagnostics/poll":
+                status, ack, events = state.poll_diagnostic(self.headers, payload)
+            else:
+                status, ack, events = state.diagnostic_reply(self.headers, payload)
             for event in events:
                 emit(event)
             self.reply(status, ack)
     return Handler
+
+
+
+def read_studio_commands(state):
+    """Local parent-process stdin, never exposed as a LAN HTTP command endpoint."""
+    for line in sys.stdin:
+        if len(line) > 32768:
+            continue
+        try:
+            payload = json.loads(line)
+            if isinstance(payload, dict) and payload.get("type") == "diagnosticCommand":
+                state.enqueue_diagnostic(payload.get("command"))
+        except (ValueError, TypeError):
+            continue
 
 
 def main():
@@ -376,7 +491,9 @@ def main():
     port = int(sys.argv[2]) if len(sys.argv) > 2 else 9453
     host = sys.argv[3] if len(sys.argv) > 3 else "127.0.0.1"
     cert, key, token, fingerprint, ca_certificate = prepare_identity(folder, host)
-    server = ThreadingHTTPServer(("0.0.0.0", port), make_handler(CollectorState(token)))
+    state = CollectorState(token)
+    threading.Thread(target=read_studio_commands, args=(state,), daemon=True).start()
+    server = ThreadingHTTPServer(("0.0.0.0", port), make_handler(state))
     server.daemon_threads = True
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.minimum_version = ssl.TLSVersion.TLSv1_2

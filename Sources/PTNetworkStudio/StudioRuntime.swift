@@ -139,6 +139,8 @@ final class StudioMitmEngine {
     private var process: Process?
     private var reader: StudioProcessReader?
     private var output: Pipe?
+    private var commandInput: Pipe?
+    var onDiagnosticReply: ((StudioDiagnosticReply) -> Void)?
     private(set) var currentRunID: UUID?
 
     var isRunning: Bool { process?.isRunning == true }
@@ -207,6 +209,8 @@ final class StudioMitmEngine {
     func stop() {
         if let p = process, p.isRunning { p.terminate() }
         output?.fileHandleForReading.readabilityHandler = nil
+        try? commandInput?.fileHandleForWriting.close()
+        commandInput = nil
         output = nil
         reader = nil
         process = nil
@@ -225,6 +229,7 @@ final class StudioBridgeController: ObservableObject {
     /// Ephemeral session UUIDs only; never a device hardware identifier.
     @Published private(set) var authenticatedSessions: [UUID: Date] = [:]
     @Published private(set) var receivedBridgeEntries = 0
+    @Published private(set) var diagnosticSessions: [UUID: Date] = [:]
     @Published var error: String?
     let port = 9453
 
@@ -251,6 +256,7 @@ final class StudioBridgeController: ObservableObject {
         self.fingerprint = ""
         self.authenticatedSessions = [:]
         self.receivedBridgeEntries = 0
+        self.diagnosticSessions = [:]
         do {
             guard let python = StudioPaths.executable(env: "PTSTUDIO_PYTHON", choices: [
                 "/usr/bin/python3", "/opt/homebrew/bin/python3", "/usr/local/bin/python3"
@@ -262,6 +268,9 @@ final class StudioBridgeController: ObservableObject {
             let pipe = Pipe()
             p.standardOutput = pipe
             p.standardError = pipe
+            let input = Pipe()
+            p.standardInput = input
+            self.commandInput = input
             let launchedRunID = UUID()
             let reader = StudioProcessReader { [weak self] message in
                 Task { @MainActor in
@@ -294,6 +303,15 @@ final class StudioBridgeController: ObservableObject {
                               let entry = try? JSONDecoder().decode(CaptureEntry.self, from: data) {
                         self.receivedBridgeEntries += 1
                         self.onEntry?(entry)
+                    } else if message["type"] as? String == "diagnosticPeer",
+                              let raw = message["sessionID"] as? String,
+                              let sessionID = UUID(uuidString: raw) {
+                        self.diagnosticSessions[sessionID] = .now
+                    } else if message["type"] as? String == "diagnosticReply",
+                              let raw = message["reply"],
+                              let data = try? JSONSerialization.data(withJSONObject: raw),
+                              let reply = try? JSONDecoder().decode(StudioDiagnosticReply.self, from: data) {
+                        self.onDiagnosticReply?(reply)
                     } else if message["type"] as? String == "bridgeDelete",
                               let raw = message["requestID"] as? String,
                               let requestID = UUID(uuidString: raw) {
@@ -345,6 +363,28 @@ final class StudioBridgeController: ObservableObject {
         lastAuthenticatedPeerAt = nil
         authenticatedSessions = [:]
         receivedBridgeEntries = 0
+        diagnosticSessions = [:]
+    }
+
+
+    /// Only the local Mac process may enqueue commands. The remote agent must
+    /// independently approve each domain and reject unauthorized writes.
+    func sendDiagnostic(_ command: StudioDiagnosticCommand) -> Bool {
+        guard isRunning, let input = commandInput,
+              diagnosticSessions[command.sessionID] != nil,
+              let value = try? JSONEncoder().encode(command),
+              value.count < 24 * 1024,
+              let envelope = try? JSONSerialization.data(withJSONObject: [
+                "type": "diagnosticCommand",
+                "command": (try JSONSerialization.jsonObject(with: value))
+              ], options: [.fragmentsAllowed]) else { return false }
+        do {
+            try input.fileHandleForWriting.write(contentsOf: envelope + Data([10]))
+            return true
+        } catch {
+            self.error = "Failed to send diagnostic command"
+            return false
+        }
     }
 
     /// Revoke a leaked or stale pairing token while no collector is listening.
