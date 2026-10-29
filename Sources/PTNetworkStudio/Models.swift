@@ -164,7 +164,8 @@ final class CaptureStore: ObservableObject {
     func replace(_ incoming: [CaptureEntry]) {
         recordsByID.removeAll()
         orderedIDs.removeAll()
-        for item in incoming.suffix(1000) {
+        // Preserve the original import behavior: first 1,000 flows win.
+        for item in incoming.prefix(1000) {
             if recordsByID.updateValue(item, forKey: item.id) == nil { orderedIDs.append(item.id) }
         }
         publishNow()
