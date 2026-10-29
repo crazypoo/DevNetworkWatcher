@@ -85,10 +85,12 @@ class DiagnosticsTests(unittest.TestCase):
                  "message": "Authorization: ABCDEF1234",
                  "entries": [{"id": "log1", "kind": "log", "name": "Login",
                               "detail": "Bearer super-secret-token a@company.com",
-                              "attributes": {"note": "password=hunter2"}}]}
+                              "attributes": {"note": "password=hunter2",
+                                             "url": "https://example.org/api?token=EXPOSED_QUERY"}}]}
         clean = safe_reply(reply)
         serialized = json.dumps(clean)
-        for value in ("ABCDEF1234", "super-secret-token", "a@company.com", "hunter2"):
+        for value in ("ABCDEF1234", "super-secret-token", "a@company.com",
+                      "hunter2", "EXPOSED_QUERY"):
             self.assertNotIn(value, serialized)
 
     def test_replay_token_and_nonce_required_without_touching_v1(self):
