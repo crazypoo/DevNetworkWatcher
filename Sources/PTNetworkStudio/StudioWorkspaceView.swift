@@ -61,6 +61,10 @@ struct StudioWorkspaceView: View {
                     StudioInspectorView(bridge: bridge, diagnostics: diagnostics)
                 case .storage:
                     StudioStorageView(bridge: bridge, diagnostics: diagnostics)
+                case .console:
+                    StudioTelemetryView(domain: .logging, bridge: bridge, diagnostics: diagnostics)
+                case .performance:
+                    StudioTelemetryView(domain: .performance, bridge: bridge, diagnostics: diagnostics)
                 default:
                     ContentUnavailableView(
                         "\(workspace.rawValue) is not connected",
