@@ -235,7 +235,7 @@ final class StudioBridgeController: ObservableObject {
     @Published var error: String?
     @Published private(set) var diagnosticResults: [String: StudioDiagnosticReply] = [:]
     @Published private(set) var diagnosticRevision = 0
-    private var pendingDiagnosticDomains: [UUID: (domain: String, created: Date)] = [:]
+    private var pendingDiagnosticDomains: [UUID: (domain: String, sessionID: UUID, created: Date)] = [:]
     private var diagnosticFingerprints: [String: String] = [:]
     private var input: Pipe?
     let port = 9453
@@ -315,7 +315,8 @@ final class StudioBridgeController: ObservableObject {
                         // Collector emits this only on authenticated hello/heartbeat.
                         // A newly authenticated iPhone must never inherit another
                         // session's Inspector/Storage/Console cached snapshots.
-                        if self.diagnosticResults.values.contains(where: { $0.sessionID != sessionID }) {
+                        if self.diagnosticResults.values.contains(where: { $0.sessionID != sessionID }) ||
+                           self.pendingDiagnosticDomains.values.contains(where: { $0.sessionID != sessionID }) {
                             self.diagnosticResults.removeAll()
                             self.diagnosticFingerprints.removeAll()
                             self.pendingDiagnosticDomains.removeAll()
@@ -339,8 +340,11 @@ final class StudioBridgeController: ObservableObject {
                         self.onReset?()
                     } else if message["type"] as? String == "diagnosticReply",
                               let reply = decodedReply,
-                              let pending = self.pendingDiagnosticDomains.removeValue(forKey: reply.id),
+                              let pending = self.pendingDiagnosticDomains[reply.id],
+                              StudioDiagnosticCorrelation.accepts(requestID: reply.id,
+                                    requestSessionID: pending.sessionID, reply: reply),
                               self.authenticatedSessions[reply.sessionID] != nil {
+                        self.pendingDiagnosticDomains.removeValue(forKey: reply.id)
                         if reply.success, let message = reply.message {
                             if message.hasPrefix("fingerprint:") || message.hasPrefix("unchanged:") {
                                 self.diagnosticFingerprints[pending.domain] =
@@ -349,8 +353,8 @@ final class StudioBridgeController: ObservableObject {
                         }
                         // Highlight/edit/undo and unchanged snapshots contain no new tree.
                         // Preserve the previous snapshot until the user selects Refresh.
-                        if reply.entries.isEmpty,
-                           let previous = self.diagnosticResults[pending.domain] {
+                        if let previous = self.diagnosticResults[pending.domain],
+                           StudioDiagnosticCorrelation.mayReuseEntries(previous: previous, reply: reply) {
                             self.diagnosticResults[pending.domain] = StudioDiagnosticReply(
                                 schemaVersion: reply.schemaVersion, id: reply.id,
                                 sessionID: reply.sessionID, success: reply.success,
@@ -436,7 +440,7 @@ final class StudioBridgeController: ObservableObject {
               data.count < 8192 else { return false }
         do {
             try input.fileHandleForWriting.write(contentsOf: data + Data([10]))
-            pendingDiagnosticDomains[request.id] = (domain: domain, created: Date())
+            pendingDiagnosticDomains[request.id] = (domain: domain, sessionID: session, created: Date())
             return true
         } catch {
             self.error = error.localizedDescription
