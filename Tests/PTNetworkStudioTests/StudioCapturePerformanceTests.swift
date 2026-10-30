@@ -60,6 +60,20 @@ final class StudioCapturePerformanceTests: XCTestCase {
         withExtendedLifetime(subscription) {}
     }
 
+    func testConnectTunnelsAreCountedInHTTPSStatistics() async throws {
+        let store = CaptureStore()
+        store.add(CaptureEntry(method: "CONNECT", url: "example.net:443",
+                               host: "example.net"))
+        store.add(CaptureEntry(method: "GET", url: "https://example.net/a",
+                               host: "example.net"))
+        store.add(CaptureEntry(method: "GET", url: "http://example.net/b",
+                               host: "example.net"))
+        try await Task.sleep(for: .milliseconds(180))
+        XCTAssertEqual(store.statistics.httpsCount, 2)
+        XCTAssertEqual(store.statistics.httpCount, 1)
+        XCTAssertEqual(store.statistics.hosts.first?.count, 3)
+    }
+
     func testClearCancelsPendingBatchWithoutGhostRows() async throws {
         let store = CaptureStore()
         store.add(CaptureEntry(method: "GET", url: "https://test.dev/", host: "test.dev"))
