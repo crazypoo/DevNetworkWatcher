@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "releaseCandidate": "PTools 6.0 + DevNetworkWatcher",
+  "note": "Template only. Pending does not constitute release approval. Replace with dated CI URLs and actual device/host measurements after execution.",
+  "automated": {
+    "ptools_quality": {
+      "status": "not_run",
+      "evidence": ""
+    },
+    "ptools_governance": {
+      "status": "not_run",
+      "evidence": ""
+    },
+    "studio_bridge_ci": {
+      "status": "not_run",
+      "evidence": ""
+    },
+    "swift6_apple_sdk": {
+      "status": "not_run",
+      "evidence": ""
+    },
+    "cocoapods_spm_compatibility": {
+      "status": "not_run",
+      "evidence": ""
+    }
+  },
+  "manual": {
+    "two_iphone_seven_cases": {
+      "status": "not_run",
+      "evidence": ""
+    },
+    "mac_idle_30_min_cpu_memory": {
+      "status": "not_run",
+      "evidence": ""
+    },
+    "network_100_500_1000_flows": {
+      "status": "not_run",
+      "evidence": ""
+    },
+    "inspector_layout_and_undo": {
+      "status": "not_run",
+      "evidence": ""
+    },
+    "session_revoke_reconnect_replay": {
+      "status": "not_run",
+      "evidence": ""
+    },
+    "multi_scene_duo_compat": {
+      "status": "not_run",
+      "evidence": ""
+    }
+  }
+}
