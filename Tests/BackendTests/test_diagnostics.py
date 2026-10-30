@@ -71,6 +71,26 @@ class DiagnosticsTests(unittest.TestCase):
         valid_b = dict(wrong, id=command_b["id"])
         self.assertEqual(broker.accept_reply(valid_b)["sessionID"], bob)
 
+    def test_revoked_session_cannot_respond_to_pending_diagnostic(self):
+        token = "z" * 32
+        sid = str(uuid.uuid4())
+        state = CollectorState(token)
+        state.sessions[sid] = {"last": 1, "ids": {}}
+        cmd = make_command(sid)
+        self.assertTrue(state.diagnostics.enqueue(cmd, state.sessions))
+        reply = {"schemaVersion": 2, "id": cmd["id"],
+                 "sessionID": sid, "success": True, "entries": []}
+        # Pairing revocation must invalidate authority for existing commands,
+        # even when the process-level bearer token has not rotated yet.
+        del state.sessions[sid]
+        code, result, event = state.diagnostic_request(
+            make_headers(token), "/v2/diagnostics/reply",
+            json.dumps(reply).encode())
+        self.assertEqual(code, 403)
+        self.assertIsNone(result)
+        self.assertIsNone(event)
+        self.assertIn(str(uuid.UUID(cmd["id"])), state.diagnostics.pending)
+
     def test_reply_redacts_sensitive_attributes_and_bounds(self):
         sid = str(uuid.uuid4())
         reply = {"schemaVersion": 2, "id": str(uuid.uuid4()),
