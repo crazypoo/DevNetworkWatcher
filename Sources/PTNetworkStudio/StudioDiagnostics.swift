@@ -60,6 +60,7 @@ enum StudioDiagnosticCorrelation {
 @MainActor
 struct StudioDiagnosticsWorkspaceView: View {
     @EnvironmentObject private var bridge: StudioBridgeController
+    @EnvironmentObject private var captures: CaptureStore
     let domain: String
     @Binding var entryQuery: String
     let onSelectRelatedDomain: (String) -> Void
@@ -128,11 +129,18 @@ struct StudioDiagnosticsWorkspaceView: View {
                 .disabled(!bridge.isRunning)
                 Button("Export JSON…") { export() }.disabled(reply == nil)
             }
-            if !relatedSnapshots.isEmpty {
+            if reply != nil {
                 ScrollView(.horizontal) {
                     HStack(spacing: 8) {
-                        Text("Same-session snapshots:")
-                            .foregroundStyle(.secondary)
+                        Button("Network (\(captures.entries.count) total flows)") {
+                            onSelectRelatedDomain("network")
+                        }
+                        .buttonStyle(.link)
+                        .help("Aggregate proxy and iPhone traffic; not scoped to the selected diagnostics session")
+                        if !relatedSnapshots.isEmpty {
+                            Text("Same-session snapshots:")
+                                .foregroundStyle(.secondary)
+                        }
                         ForEach(relatedSnapshots) { item in
                             Button("\(item.domain.capitalized) (\(item.entryCount))") {
                                 onSelectRelatedDomain(item.domain)
@@ -142,7 +150,7 @@ struct StudioDiagnosticsWorkspaceView: View {
                     }
                     .font(.caption)
                 }
-                .accessibilityLabel("Other diagnostic workspaces from the same authorized session")
+                .accessibilityLabel("Network aggregate and other authorized same-session diagnostic workspaces")
             }
             if !bridge.isRunning {
                 ContentUnavailableView("Bridge stopped", systemImage: "iphone.slash",
