@@ -51,6 +51,20 @@ enum StudioDiagnosticCorrelation {
         reply.sessionID == requestSessionID
     }
 
+    /// Local command lifetime and authenticated peer liveness are independent
+    /// of a matching UUID. A stale pending request must not be revived after
+    /// revocation, a long disconnect or replay.
+    static func acceptsLive(requestID: UUID, requestSessionID: UUID,
+                            createdAt: Date, peerLastSeen: Date, now: Date,
+                            reply: StudioDiagnosticReply) -> Bool {
+        let requestAge = now.timeIntervalSince(createdAt)
+        let heartbeatAge = now.timeIntervalSince(peerLastSeen)
+        guard requestAge >= 0, requestAge < 50,
+              heartbeatAge >= 0, heartbeatAge < 100 else { return false }
+        return accepts(requestID: requestID, requestSessionID: requestSessionID,
+                       reply: reply)
+    }
+
     static func mayReuseEntries(previous: StudioDiagnosticReply,
                                 reply: StudioDiagnosticReply) -> Bool {
         reply.entries.isEmpty && previous.sessionID == reply.sessionID
