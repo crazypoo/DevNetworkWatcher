@@ -120,10 +120,17 @@ final class StudioProcessReader {
         lock.lock()
         buffer.append(chunk)
         if buffer.count > 4 * 1024 * 1024 { buffer.removeAll(keepingCapacity: true) }
+        // Split all complete lines before compaction. Repeatedly removing the
+        // first line makes a burst of N entries quadratic in copied bytes.
         var messages = [Data]()
-        while let end = buffer.firstIndex(of: 10) {
-            messages.append(Data(buffer[..<end]))
-            buffer.removeSubrange(...end)
+        var cursor = buffer.startIndex
+        while cursor < buffer.endIndex,
+              let end = buffer[cursor...].firstIndex(of: 10) {
+            messages.append(Data(buffer[cursor..<end]))
+            cursor = buffer.index(after: end)
+        }
+        if cursor != buffer.startIndex {
+            buffer.removeSubrange(buffer.startIndex..<cursor)
         }
         lock.unlock()
         for line in messages {
