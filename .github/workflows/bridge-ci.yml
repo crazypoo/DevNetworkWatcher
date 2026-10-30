@@ -21,11 +21,14 @@ jobs:
           python3 -m unittest discover -v -s Tests/BackendTests
           python3 -m py_compile Sources/PTNetworkStudio/Backend/*.py
           python3 Scripts/bench-diagnostics.py > diagnostics-baseline.json
+          python3 Scripts/bench_studio_matrix.py > studio-pr42-matrix-linux.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: studio-backend-diagnostics-linux
-          path: diagnostics-baseline.json
+          path: |
+            diagnostics-baseline.json
+            studio-pr42-matrix-linux.json
           if-no-files-found: ignore
           retention-days: 14
 
@@ -42,11 +45,15 @@ jobs:
       - name: Diagnostic JSON processing baseline (non-gating)
         run: |
           python3 Scripts/bench-diagnostics.py > diagnostics-baseline.json
+          python3 Scripts/bench_studio_matrix.py > studio-pr42-matrix-macos.json
           cat diagnostics-baseline.json
+          cat studio-pr42-matrix-macos.json
       - uses: actions/upload-artifact@v4
         with:
           name: studio-diagnostics-benchmark
-          path: diagnostics-baseline.json
+          path: |
+            diagnostics-baseline.json
+            studio-pr42-matrix-macos.json
           retention-days: 14
       - name: Native macOS SwiftPM build and tests
         run: |
@@ -55,3 +62,29 @@ jobs:
           python3 Scripts/audit-swift-source.py
           swift test
           sh Scripts/build-macos.sh
+
+  release-gates:
+    name: PR41/45 all automated Studio gates
+    if: always()
+    needs: [backend-linux, test-macos]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require both Linux and Apple SDK checks
+        env:
+          REQUIRED_GATE_RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+          jobs = json.loads(os.environ["REQUIRED_GATE_RESULTS"])
+          bad = sorted((name, job.get("result", "unknown"))
+                       for name, job in jobs.items()
+                       if job.get("result") != "success")
+          for name, result in bad:
+              print(f"FAIL: {name}: {result}")
+          if bad:
+              sys.exit(1)
+          print("PASS: backend + native macOS build and test gates")
+          PY

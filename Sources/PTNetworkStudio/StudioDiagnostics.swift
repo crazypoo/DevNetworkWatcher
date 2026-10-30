@@ -57,13 +57,6 @@ enum StudioDiagnosticCorrelation {
     }
 }
 
-/// Calculated on refresh instead of rebuilding the parent dictionary for every SwiftUI row.
-private struct StudioHierarchyRow: Identifiable {
-    let entry: StudioDiagnosticEntry
-    let depth: Int
-    var id: String { entry.id }
-}
-
 @MainActor
 struct StudioDiagnosticsWorkspaceView: View {
     @EnvironmentObject private var bridge: StudioBridgeController
@@ -313,41 +306,22 @@ struct StudioDiagnosticsWorkspaceView: View {
     }
 
     private func rebuildIndex() {
-        // Refresh-time projections; avoid allocating a mapped array for every
-        // SwiftUI body invalidation (selection, search, preview or controls).
-        flatRows = entries.map { StudioHierarchyRow(entry: $0, depth: 0) }
-        perspectiveEntries = Array(entries.lazy.filter { $0.frame != nil }.prefix(70))
-        indexedEntries = Dictionary(entries.map { ($0.id, $0) },
-                                    uniquingKeysWith: { first, _ in first })
-        var next: [String: [String]] = [:]
-        for entry in entries {
-            if let parent = entry.parentID, indexedEntries[parent] != nil {
-                next[parent, default: []].append(entry.id)
-            }
-        }
-        children = next
+        // Build all stable projections together instead of allocating three
+        // independent mapped arrays on every authorized reply.
+        let projection = StudioHierarchyProjection(entries: entries)
+        flatRows = projection.flatRows
+        perspectiveEntries = projection.perspectiveEntries
+        indexedEntries = projection.indexedEntries
+        children = projection.children
         collapsedIDs = collapsedIDs.intersection(Set(indexedEntries.keys))
         rebuildVisibleRows()
         updatePreview()
     }
 
     private func rebuildVisibleRows() {
-        var result: [StudioHierarchyRow] = []
-        var visited = Set<String>()
-        func walk(_ entry: StudioDiagnosticEntry, _ depth: Int) {
-            guard depth < 20, result.count < 1_200, visited.insert(entry.id).inserted else { return }
-            result.append(StudioHierarchyRow(entry: entry, depth: depth))
-            guard !collapsedIDs.contains(entry.id) else { return }
-            for id in children[entry.id] ?? [] {
-                if let child = indexedEntries[id] { walk(child, depth + 1) }
-            }
-        }
-        for entry in entries where entry.parentID == nil || indexedEntries[entry.parentID ?? ""] == nil {
-            walk(entry, 0)
-        }
-        // Preserve unusual/cyclic nodes as visible roots rather than discarding them.
-        for entry in entries where !visited.contains(entry.id) { walk(entry, 0) }
-        treeRows = result
+        treeRows = StudioHierarchyProjection.visibleRows(
+            entries: entries, indexed: indexedEntries,
+            children: children, collapsed: collapsedIDs)
     }
 
     private func updatePreview() {

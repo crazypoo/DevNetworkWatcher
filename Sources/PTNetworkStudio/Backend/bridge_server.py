@@ -285,6 +285,10 @@ class CollectorState:
                 # Long polling must run OUTSIDE CollectorState.lock. Otherwise
                 # authenticated network ACKs and macOS stdin commands starve.
             elif path == "/v2/diagnostics/reply":
+                # The command's original session may have been revoked after
+                # enqueue. A formerly paired device must not complete it.
+                if not is_valid_session(payload.get("sessionID"), self.sessions):
+                    return 403, None, None
                 try:
                     result = self.diagnostics.accept_reply(payload)
                 except ValueError:
