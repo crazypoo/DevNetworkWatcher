@@ -10,6 +10,25 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  backend-linux:
+    name: Python backend, TLS and schema v1/v2 contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run backend regression suite
+        run: |
+          python3 -m unittest discover -v -s Tests/BackendTests
+          python3 -m py_compile Sources/PTNetworkStudio/Backend/*.py
+          python3 Scripts/bench-diagnostics.py > diagnostics-baseline.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: studio-backend-diagnostics-linux
+          path: diagnostics-baseline.json
+          if-no-files-found: ignore
+          retention-days: 14
+
   test-macos:
     name: macOS build + schema v1 tests
     runs-on: macos-15

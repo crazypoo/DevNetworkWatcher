@@ -62,6 +62,7 @@ struct StudioDiagnosticsWorkspaceView: View {
     @State private var indexedEntries: [String: StudioDiagnosticEntry] = [:]
     @State private var children: [String: [String]] = [:]
     @State private var treeRows: [StudioHierarchyRow] = []
+    @State private var flatRows: [StudioHierarchyRow] = []
     @State private var collapsedIDs: Set<String> = []
     @State private var decodedPreview: NSImage?
     @State private var previewCache = NSCache<NSString, NSImage>()
@@ -112,8 +113,7 @@ struct StudioDiagnosticsWorkspaceView: View {
             } else {
                 HStack(spacing: 0) {
                     List(selection: $selectedID) {
-                        ForEach(domain == "inspector" ? treeRows :
-                                entries.map { StudioHierarchyRow(entry: $0, depth: 0) }) { row in
+                        ForEach(domain == "inspector" ? treeRows : flatRows) { row in
                             let entry = row.entry
                             HStack {
                                 if domain == "inspector" && children[entry.id] != nil {
@@ -256,6 +256,7 @@ struct StudioDiagnosticsWorkspaceView: View {
         indexedEntries = [:]
         children = [:]
         treeRows = []
+        flatRows = []
         perspectiveEntries = []
         lastIndexedReplyID = nil
         lastIndexedFingerprint = nil
@@ -296,6 +297,9 @@ struct StudioDiagnosticsWorkspaceView: View {
     }
 
     private func rebuildIndex() {
+        // Refresh-time projections; avoid allocating a mapped array for every
+        // SwiftUI body invalidation (selection, search, preview or controls).
+        flatRows = entries.map { StudioHierarchyRow(entry: $0, depth: 0) }
         perspectiveEntries = Array(entries.lazy.filter { $0.frame != nil }.prefix(70))
         indexedEntries = Dictionary(entries.map { ($0.id, $0) },
                                     uniquingKeysWith: { first, _ in first })

@@ -157,7 +157,11 @@ class BridgeProtocolTests(unittest.TestCase):
                                     "events": [sample_event("hello", 1, session),
                                                sample_event("recordFinalize", 2, session)]}).encode()
                 connection.request("POST", "/v1/events", body=batch, headers=headers("incorrect"))
-                self.assertEqual(connection.getresponse().status, 401)
+                rejected = connection.getresponse()
+                self.assertEqual(rejected.status, 401)
+                # HTTPConnection must drain a previous response before reuse.
+                # Python 3.12 rejects the next getresponse() otherwise.
+                rejected.read()
                 connection.request("POST", "/v1/events", body=batch, headers=headers(ready["token"]))
                 response = connection.getresponse()
                 self.assertEqual(response.status, 200)
