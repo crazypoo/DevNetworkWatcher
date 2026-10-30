@@ -24,6 +24,7 @@ jobs:
           python3 Scripts/verify-pr55-release-evidence.py Docs/Studio_PR55_Release_Evidence.template.json --validate-template
           python3 Scripts/bench-diagnostics.py > diagnostics-baseline.json
           python3 Scripts/bench_studio_matrix.py > studio-pr42-matrix-linux.json
+          python3 Scripts/bench_bridge_local_ipc.py > studio-pr58-ipc-linux.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -31,6 +32,7 @@ jobs:
           path: |
             diagnostics-baseline.json
             studio-pr42-matrix-linux.json
+            studio-pr58-ipc-linux.json
           if-no-files-found: ignore
           retention-days: 14
 
@@ -50,6 +52,7 @@ jobs:
         run: |
           python3 Scripts/bench-diagnostics.py > diagnostics-baseline.json
           python3 Scripts/bench_studio_matrix.py > studio-pr42-matrix-macos.json
+          python3 Scripts/bench_bridge_local_ipc.py > studio-pr58-ipc-macos.json
           cat diagnostics-baseline.json
           cat studio-pr42-matrix-macos.json
       - uses: actions/upload-artifact@v4
@@ -58,6 +61,7 @@ jobs:
           path: |
             diagnostics-baseline.json
             studio-pr42-matrix-macos.json
+            studio-pr58-ipc-macos.json
           retention-days: 14
       - name: Record actual native toolchain and SDK
         run: |
