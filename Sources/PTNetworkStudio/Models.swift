@@ -193,7 +193,9 @@ final class CaptureStore: ObservableObject {
         for entry in snapshot {
             domains[entry.host, default: 0] += 1
             if entry.url.hasPrefix("http://") { http += 1 }
-            if entry.url.hasPrefix("https://") { https += 1 }
+            // CONNECT tunnels belong to the HTTPS scope even when the proxy
+            // reports the authority rather than a full https:// URL.
+            if entry.isTunnel || entry.url.hasPrefix("https://") { https += 1 }
             if entry.error != nil || (entry.status ?? 0) >= 400 { failures += 1 }
         }
         statistics = CaptureStatistics(httpCount: http, httpsCount: https,
