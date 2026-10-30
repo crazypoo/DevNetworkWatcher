@@ -25,6 +25,7 @@ not a synchronized iPhone event time.
 ```sh
 python3 -m unittest discover -v -s Tests/BackendTests
 python3 -m py_compile Sources/PTNetworkStudio/Backend/*.py Scripts/bench_studio_matrix.py
+python3 Scripts/verify-pr50-boundaries.py
 python3 Scripts/bench_studio_matrix.py
 swift package dump-package
 swiftc -frontend -parse Sources/PTNetworkStudio/*.swift
