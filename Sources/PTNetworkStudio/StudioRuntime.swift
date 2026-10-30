@@ -278,6 +278,16 @@ final class StudioBridgeController: ObservableObject {
                           let data = try? JSONSerialization.data(withJSONObject: raw) else { return nil }
                     return try? JSONDecoder().decode(CaptureEntry.self, from: data)
                 }()
+                // JSON serialization and a potentially 1,200-node Inspector decode
+                // run on the pipe reader, not on MainActor/SwiftUI's render path.
+                let decodedReply: StudioDiagnosticReply? = {
+                    guard message["type"] as? String == "diagnosticReply",
+                          let raw = message["reply"],
+                          let data = try? JSONSerialization.data(withJSONObject: raw),
+                          let value = try? JSONDecoder().decode(StudioDiagnosticReply.self, from: data),
+                          value.schemaVersion == 2 else { return nil }
+                    return value
+                }()
                 Task { @MainActor in
                     guard let self, self.runID == launchedRunID else { return }
                     if let type = message["type"] as? String, type == "bridgeReady" {
@@ -321,10 +331,7 @@ final class StudioBridgeController: ObservableObject {
                     } else if message["type"] as? String == "bridgeReset" {
                         self.onReset?()
                     } else if message["type"] as? String == "diagnosticReply",
-                              let raw = message["reply"],
-                              let data = try? JSONSerialization.data(withJSONObject: raw),
-                              let reply = try? JSONDecoder().decode(StudioDiagnosticReply.self, from: data),
-                              reply.schemaVersion == 2,
+                              let reply = decodedReply,
                               let pending = self.pendingDiagnosticDomains.removeValue(forKey: reply.id),
                               self.authenticatedSessions[reply.sessionID] != nil {
                         if reply.success, let message = reply.message {
