@@ -31,4 +31,24 @@ final class StudioLayoutAuditTests: XCTestCase {
         XCTAssertNil(findings["ordinary"])
         XCTAssertEqual(findings["hidden"]?.first?.kind, .emptySize)
     }
+    func testMixedAutoresizingAndConstraintsAreOnlyAdvisory() {
+        let entry = StudioDiagnosticEntry(
+            id: "mixed", parentID: nil, kind: "UIView", name: "UIView",
+            detail: nil, frame: StudioDiagnosticRect(x: 0, y: 0, width: 80, height: 30),
+            attributes: ["translatesAutoresizingMaskIntoConstraints": "true",
+                         "ownActiveConstraints": "3"],
+            previewBase64: nil)
+        let findings = StudioLayoutAudit.analyze([entry])
+        XCTAssertEqual(findings["mixed"]?.map(\.kind), [.mixedLayoutModes])
+        XCTAssertTrue(findings["mixed"]?.first?.summary.contains("review only") == true)
+    }
+
+    func testHiddenZeroSizeIsNotReportedAsVisibleLayoutFailure() {
+        let hidden = StudioDiagnosticEntry(
+            id: "hidden", parentID: nil, kind: "UIView", name: "Placeholder",
+            detail: nil, frame: StudioDiagnosticRect(x: 0, y: 0, width: 0, height: 0),
+            attributes: ["isHidden": "true"], previewBase64: nil)
+        XCTAssertNil(StudioLayoutAudit.analyze([hidden])["hidden"])
+    }
+
 }
