@@ -356,9 +356,13 @@ final class StudioBridgeController: ObservableObject {
                     } else if message["type"] as? String == "diagnosticReply",
                               let reply = decodedReply,
                               let pending = self.pendingDiagnosticDomains[reply.id],
-                              StudioDiagnosticCorrelation.accepts(requestID: reply.id,
-                                    requestSessionID: pending.sessionID, reply: reply),
-                              self.authenticatedSessions[reply.sessionID] != nil {
+                              let lastHeartbeat = self.authenticatedSessions[reply.sessionID],
+                              StudioDiagnosticCorrelation.acceptsLive(
+                                  requestID: reply.id,
+                                  requestSessionID: pending.sessionID,
+                                  createdAt: pending.created,
+                                  peerLastSeen: lastHeartbeat,
+                                  now: Date(), reply: reply) {
                         self.pendingDiagnosticDomains.removeValue(forKey: reply.id)
                         if reply.success, let message = reply.message {
                             if message.hasPrefix("fingerprint:") || message.hasPrefix("unchanged:") {
