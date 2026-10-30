@@ -14,14 +14,14 @@ struct StudioDiagnosticCommand: Encodable {
     let arguments: [String: String]
 }
 
-struct StudioDiagnosticRect: Codable {
+struct StudioDiagnosticRect: Codable, Sendable {
     let x: Double
     let y: Double
     let width: Double
     let height: Double
 }
 
-struct StudioDiagnosticEntry: Codable, Identifiable {
+struct StudioDiagnosticEntry: Codable, Identifiable, Sendable {
     let id: String
     let parentID: String?
     let kind: String
@@ -32,7 +32,7 @@ struct StudioDiagnosticEntry: Codable, Identifiable {
     let previewBase64: String?
 }
 
-struct StudioDiagnosticReply: Decodable {
+struct StudioDiagnosticReply: Decodable, Sendable {
     let schemaVersion: Int
     let id: UUID
     let sessionID: UUID
