@@ -60,7 +60,10 @@ enum StudioDiagnosticCorrelation {
 @MainActor
 struct StudioDiagnosticsWorkspaceView: View {
     @EnvironmentObject private var bridge: StudioBridgeController
+    @EnvironmentObject private var captures: CaptureStore
     let domain: String
+    @Binding var entryQuery: String
+    let onSelectRelatedDomain: (String) -> Void
     @State private var storageArea = "storage"
     @State private var selectedID: String?
     @State private var previousIDs: Set<String> = []
@@ -73,7 +76,6 @@ struct StudioDiagnosticsWorkspaceView: View {
     @State private var treeRows: [StudioHierarchyRow] = []
     @State private var flatRows: [StudioHierarchyRow] = []
     @State private var filteredRows: [StudioHierarchyRow] = []
-    @State private var entryQuery = ""
     @State private var snapshotReceivedAt: Date?
     @State private var layoutFindings: [String: [StudioLayoutFinding]] = [:]
     @State private var collapsedIDs: Set<String> = []
@@ -89,6 +91,12 @@ struct StudioDiagnosticsWorkspaceView: View {
     }
     private var reply: StudioDiagnosticReply? { bridge.diagnosticResults[targetDomain] }
     private var entries: [StudioDiagnosticEntry] { reply?.entries ?? [] }
+    private var relatedSnapshots: [StudioCorrelatedSnapshot] {
+        guard let reply else { return [] }
+        return StudioDiagnosticSessionCorrelation.relatedSnapshots(
+            to: targetDomain, sessionID: reply.sessionID,
+            available: bridge.diagnosticResults)
+    }
     private var selected: StudioDiagnosticEntry? {
         guard let selectedID else { return nil }
         return indexedEntries[selectedID]
@@ -120,6 +128,29 @@ struct StudioDiagnosticsWorkspaceView: View {
                 }
                 .disabled(!bridge.isRunning)
                 Button("Export JSON…") { export() }.disabled(reply == nil)
+            }
+            if reply != nil {
+                ScrollView(.horizontal) {
+                    HStack(spacing: 8) {
+                        Button("Network (\(captures.entries.count) total flows)") {
+                            onSelectRelatedDomain("network")
+                        }
+                        .buttonStyle(.link)
+                        .help("Aggregate proxy and iPhone traffic; not scoped to the selected diagnostics session")
+                        if !relatedSnapshots.isEmpty {
+                            Text("Same-session snapshots:")
+                                .foregroundStyle(.secondary)
+                        }
+                        ForEach(relatedSnapshots) { item in
+                            Button("\(item.domain.capitalized) (\(item.entryCount))") {
+                                onSelectRelatedDomain(item.domain)
+                            }
+                            .buttonStyle(.link)
+                        }
+                    }
+                    .font(.caption)
+                }
+                .accessibilityLabel("Network aggregate and other authorized same-session diagnostic workspaces")
             }
             if !bridge.isRunning {
                 ContentUnavailableView("Bridge stopped", systemImage: "iphone.slash",
@@ -296,7 +327,6 @@ struct StudioDiagnosticsWorkspaceView: View {
         treeRows = []
         flatRows = []
         filteredRows = []
-        entryQuery = ""
         snapshotReceivedAt = nil
         layoutFindings = [:]
         perspectiveEntries = []

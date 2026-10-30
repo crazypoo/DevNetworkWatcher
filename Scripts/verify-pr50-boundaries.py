@@ -18,6 +18,7 @@ expected = {
     r"\benum\s+StudioFlowProjection\b": ["StudioFlowProjection.swift"],
     r"\benum\s+StudioLayoutAudit\b": ["StudioLayoutAudit.swift"],
     r"\benum\s+StudioDiagnosticSearch\b": ["StudioDiagnosticSearch.swift"],
+    r"\benum\s+StudioDiagnosticSessionCorrelation\b": ["StudioDiagnosticSessionCorrelation.swift"],
 }
 for pattern, correct in expected.items():
     actual = owners(pattern)
@@ -27,6 +28,9 @@ assert "StudioFlowProjection.filter(" in swift["StudioContentView.swift"]
 assert "filterWorker?.cancel()" in swift["StudioContentView.swift"]
 assert "StudioLayoutAudit.analyze(entries)" in swift["StudioDiagnostics.swift"]
 assert "StudioDiagnosticSearch.filter(" in swift["StudioDiagnostics.swift"]
+assert "StudioDiagnosticSessionCorrelation.relatedSnapshots(" in swift["StudioDiagnostics.swift"]
+assert "reply.sessionID == sessionID" in swift["StudioDiagnosticSessionCorrelation.swift"]
+assert "diagnosticSearch" in swift["StudioWorkspaceView.swift"]
 
 backend = (SOURCES / "Backend" / "bridge_server.py").read_text()
 assert '"/v1/events"' in backend and '"/v2/diagnostics/reply"' in backend

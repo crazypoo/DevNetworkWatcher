@@ -19,8 +19,9 @@ struct StudioContentView: View {
     @State private var visibleEntries: [CaptureEntry] = []
     @State private var searchTask: Task<Void, Never>?
     @State private var filterTask: Task<Void, Never>?
-    @State private var filterWorker: Task<[CaptureEntry], Never>?
+    @State private var filterWorker: Task<([CaptureEntry], Double), Never>?
     @State private var filterRevision: UInt64 = 0
+    @State private var lastProjectionMilliseconds: Double?
     @State private var port = "9090"
     @State private var showComposer = false
     @State private var inspectorTab = 0
@@ -55,8 +56,11 @@ struct StudioContentView: View {
         filterWorker?.cancel()
         // Avoid scheduling overhead for small sets and initial empty results.
         if source.count < 300 {
+            let started = ProcessInfo.processInfo.systemUptime
             visibleEntries = StudioFlowProjection.filter(
                 entries: source, scope: selectedScope, search: searchValue)
+            lastProjectionMilliseconds =
+                (ProcessInfo.processInfo.systemUptime - started) * 1_000
             filterTask = nil
             filterWorker = nil
             return
@@ -65,14 +69,17 @@ struct StudioContentView: View {
         // Filter larger immutable Sendable snapshots off MainActor and discard
         // older results after scope/search/reset changes.
         let worker = Task.detached(priority: .userInitiated) {
-            StudioFlowProjection.filter(
+            let started = ProcessInfo.processInfo.systemUptime
+            let rows = StudioFlowProjection.filter(
                 entries: source, scope: selectedScope, search: searchValue)
+            return (rows, (ProcessInfo.processInfo.systemUptime - started) * 1_000)
         }
         filterWorker = worker
         filterTask = Task(priority: .userInitiated) {
-            let rows = await worker.value
+            let (rows, elapsedMilliseconds) = await worker.value
             guard !Task.isCancelled, revision == filterRevision else { return }
             visibleEntries = rows
+            lastProjectionMilliseconds = elapsedMilliseconds
             filterWorker = nil
             filterTask = nil
         }
@@ -333,6 +340,10 @@ struct StudioContentView: View {
             HStack {
                 Label("\(store.entries.count) requests", systemImage: "circle.grid.2x2")
                 Spacer()
+                if let milliseconds = lastProjectionMilliseconds {
+                    Text(String(format: "Filter %.1f ms", milliseconds))
+                        .help("Measured projection duration only; not end-to-end SwiftUI frame time")
+                }
                 Text("Sanitized previews • max 1,000 flows")
             }.foregroundStyle(.secondary).font(.caption2).padding(.horizontal, 15).padding(.vertical, 9)
         }
