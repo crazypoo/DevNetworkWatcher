@@ -19,6 +19,7 @@ struct StudioContentView: View {
     @State private var visibleEntries: [CaptureEntry] = []
     @State private var searchTask: Task<Void, Never>?
     @State private var filterTask: Task<Void, Never>?
+    @State private var filterWorker: Task<[CaptureEntry], Never>?
     @State private var filterRevision: UInt64 = 0
     @State private var port = "9090"
     @State private var showComposer = false
@@ -51,23 +52,28 @@ struct StudioContentView: View {
         filterRevision &+= 1
         let revision = filterRevision
         filterTask?.cancel()
+        filterWorker?.cancel()
         // Avoid scheduling overhead for small sets and initial empty results.
         if source.count < 300 {
             visibleEntries = StudioFlowProjection.filter(
                 entries: source, scope: selectedScope, search: searchValue)
             filterTask = nil
+            filterWorker = nil
             return
         }
         // The 75 ms CaptureStore publish buffer already batches traffic.
         // Filter larger immutable Sendable snapshots off MainActor and discard
         // older results after scope/search/reset changes.
+        let worker = Task.detached(priority: .userInitiated) {
+            StudioFlowProjection.filter(
+                entries: source, scope: selectedScope, search: searchValue)
+        }
+        filterWorker = worker
         filterTask = Task(priority: .userInitiated) {
-            let rows = await Task.detached(priority: .userInitiated) {
-                StudioFlowProjection.filter(
-                    entries: source, scope: selectedScope, search: searchValue)
-            }.value
+            let rows = await worker.value
             guard !Task.isCancelled, revision == filterRevision else { return }
             visibleEntries = rows
+            filterWorker = nil
             filterTask = nil
         }
     }
@@ -102,6 +108,7 @@ struct StudioContentView: View {
         .onDisappear {
             searchTask?.cancel(); searchTask = nil
             filterTask?.cancel(); filterTask = nil
+            filterWorker?.cancel(); filterWorker = nil
         }
         .toolbar {
             ToolbarItemGroup(placement: .navigation) {
