@@ -55,3 +55,29 @@ jobs:
           python3 Scripts/audit-swift-source.py
           swift test
           sh Scripts/build-macos.sh
+
+  release-gates:
+    name: PR41/45 all automated Studio gates
+    if: always()
+    needs: [backend-linux, test-macos]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require both Linux and Apple SDK checks
+        env:
+          REQUIRED_GATE_RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+          jobs = json.loads(os.environ["REQUIRED_GATE_RESULTS"])
+          bad = sorted((name, job.get("result", "unknown"))
+                       for name, job in jobs.items()
+                       if job.get("result") != "success")
+          for name, result in bad:
+              print(f"FAIL: {name}: {result}")
+          if bad:
+              sys.exit(1)
+          print("PASS: backend + native macOS build and test gates")
+          PY
