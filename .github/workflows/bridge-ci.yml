@@ -59,6 +59,13 @@ jobs:
             diagnostics-baseline.json
             studio-pr42-matrix-macos.json
           retention-days: 14
+      - name: Record actual native toolchain and SDK
+        run: |
+          sw_vers
+          uname -m
+          xcodebuild -version
+          xcrun --sdk macosx --show-sdk-version
+          swift --version
       - name: Native macOS SwiftPM build and tests
         run: |
           swift package dump-package >/dev/null
