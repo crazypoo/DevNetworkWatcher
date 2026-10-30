@@ -61,6 +61,8 @@ enum StudioDiagnosticCorrelation {
 struct StudioDiagnosticsWorkspaceView: View {
     @EnvironmentObject private var bridge: StudioBridgeController
     let domain: String
+    @Binding var entryQuery: String
+    let onSelectRelatedDomain: (String) -> Void
     @State private var storageArea = "storage"
     @State private var selectedID: String?
     @State private var previousIDs: Set<String> = []
@@ -73,7 +75,6 @@ struct StudioDiagnosticsWorkspaceView: View {
     @State private var treeRows: [StudioHierarchyRow] = []
     @State private var flatRows: [StudioHierarchyRow] = []
     @State private var filteredRows: [StudioHierarchyRow] = []
-    @State private var entryQuery = ""
     @State private var snapshotReceivedAt: Date?
     @State private var layoutFindings: [String: [StudioLayoutFinding]] = [:]
     @State private var collapsedIDs: Set<String> = []
@@ -89,6 +90,12 @@ struct StudioDiagnosticsWorkspaceView: View {
     }
     private var reply: StudioDiagnosticReply? { bridge.diagnosticResults[targetDomain] }
     private var entries: [StudioDiagnosticEntry] { reply?.entries ?? [] }
+    private var relatedSnapshots: [StudioCorrelatedSnapshot] {
+        guard let reply else { return [] }
+        return StudioDiagnosticSessionCorrelation.relatedSnapshots(
+            to: targetDomain, sessionID: reply.sessionID,
+            available: bridge.diagnosticResults)
+    }
     private var selected: StudioDiagnosticEntry? {
         guard let selectedID else { return nil }
         return indexedEntries[selectedID]
@@ -120,6 +127,22 @@ struct StudioDiagnosticsWorkspaceView: View {
                 }
                 .disabled(!bridge.isRunning)
                 Button("Export JSON…") { export() }.disabled(reply == nil)
+            }
+            if !relatedSnapshots.isEmpty {
+                ScrollView(.horizontal) {
+                    HStack(spacing: 8) {
+                        Text("Same-session snapshots:")
+                            .foregroundStyle(.secondary)
+                        ForEach(relatedSnapshots) { item in
+                            Button("\(item.domain.capitalized) (\(item.entryCount))") {
+                                onSelectRelatedDomain(item.domain)
+                            }
+                            .buttonStyle(.link)
+                        }
+                    }
+                    .font(.caption)
+                }
+                .accessibilityLabel("Other diagnostic workspaces from the same authorized session")
             }
             if !bridge.isRunning {
                 ContentUnavailableView("Bridge stopped", systemImage: "iphone.slash",
@@ -296,7 +319,6 @@ struct StudioDiagnosticsWorkspaceView: View {
         treeRows = []
         flatRows = []
         filteredRows = []
-        entryQuery = ""
         snapshotReceivedAt = nil
         layoutFindings = [:]
         perspectiveEntries = []
