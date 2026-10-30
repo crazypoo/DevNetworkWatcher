@@ -6,6 +6,8 @@ struct StudioWorkspaceView: View {
     @EnvironmentObject private var store: CaptureStore
     @StateObject private var bridge = StudioBridgeController()
     @State private var workspace: Workspace = .network
+    // In-memory only; never persist potentially sensitive diagnostic search terms.
+    @State private var diagnosticSearch = ""
 
     enum Workspace: String, CaseIterable, Identifiable {
         case network = "Network"
@@ -57,7 +59,15 @@ struct StudioWorkspaceView: View {
                 case .network:
                     StudioContentView()
                 default:
-                    StudioDiagnosticsWorkspaceView(domain: workspace.rawValue.lowercased())
+                    StudioDiagnosticsWorkspaceView(
+                        domain: workspace.rawValue.lowercased(),
+                        entryQuery: $diagnosticSearch,
+                        onSelectRelatedDomain: { raw in
+                            let target = ["defaults", "database"].contains(raw) ? "storage" : raw
+                            if let next = Workspace(rawValue: target.capitalized) {
+                                workspace = next
+                            }
+                        })
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
