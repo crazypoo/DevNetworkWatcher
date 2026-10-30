@@ -63,7 +63,8 @@ struct StudioWorkspaceView: View {
                         domain: workspace.rawValue.lowercased(),
                         entryQuery: $diagnosticSearch,
                         onSelectRelatedDomain: { raw in
-                            let target = ["defaults", "database"].contains(raw) ? "storage" : raw
+                            let target = ["defaults", "database"].contains(raw) ? "storage"
+                                : raw == "logging" ? "console" : raw
                             if let next = Workspace(rawValue: target.capitalized) {
                                 workspace = next
                             }
