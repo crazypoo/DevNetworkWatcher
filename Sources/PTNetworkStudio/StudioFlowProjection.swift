@@ -12,7 +12,12 @@ enum StudioFlowProjection {
         var result: [CaptureEntry] = []
         result.reserveCapacity(entries.count)
         // Match the legacy reversed display order, without intermediate arrays.
-        for entry in entries.reversed() {
+        for (index, entry) in entries.reversed().enumerated() {
+            // An obsolete detached projection should stop burning CPU when
+            // the search, scope or capture generation changes.
+            if index.isMultiple(of: 64) && Task<Never, Never>.isCancelled {
+                return []
+            }
             let included: Bool
             switch scope {
             case .all: included = true
