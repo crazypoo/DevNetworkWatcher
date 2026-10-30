@@ -31,8 +31,18 @@ KINDS = {"hello", "capabilities", "recordUpsert", "recordFinalize",
          "recordDelete", "sessionReset", "heartbeat"}
 
 
+_STDOUT_LOCK = threading.Lock()
+
+
+def emit_many(values):
+    """Keep local IPC lines intact and each request's control barriers ordered."""
+    with _STDOUT_LOCK:
+        for value in values:
+            print(PREFIX + json.dumps(value, ensure_ascii=False, separators=(",", ":")), flush=True)
+
+
 def emit(value):
-    print(PREFIX + json.dumps(value, ensure_ascii=False, separators=(",", ":")), flush=True)
+    emit_many((value,))
 
 
 def local_ui_messages(events):
@@ -449,8 +459,7 @@ def make_handler(state):
                 self.reply(status, result)
             else:
                 status, ack, events = state.receive(self.headers, body)
-                for event in local_ui_messages(events):
-                    emit(event)
+                emit_many(local_ui_messages(events))
                 self.reply(status, ack)
     return Handler
 
