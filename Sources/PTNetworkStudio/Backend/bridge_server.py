@@ -31,8 +31,45 @@ KINDS = {"hello", "capabilities", "recordUpsert", "recordFinalize",
          "recordDelete", "sessionReset", "heartbeat"}
 
 
+_STDOUT_LOCK = threading.Lock()
+
+
+def emit_many(values):
+    """Keep local IPC lines intact and each request's control barriers ordered."""
+    with _STDOUT_LOCK:
+        for value in values:
+            print(PREFIX + json.dumps(value, ensure_ascii=False, separators=(",", ":")), flush=True)
+
+
 def emit(value):
-    print(PREFIX + json.dumps(value, ensure_ascii=False, separators=(",", ":")), flush=True)
+    emit_many((value,))
+
+
+def local_ui_messages(events):
+    """Coalesce contiguous sanitized upserts for Mac IPC only.
+
+    The externally authenticated /v1/events input and its ACK, sequence,
+    reset, delete and peer ordering remain unchanged. Never merge across
+    non-entry events: those form ordering barriers for the Swift UI.
+    """
+    pending = []
+
+    def flush():
+        nonlocal pending
+        if pending:
+            if len(pending) == 1:
+                yield {"type": "entry", "entry": pending[0]}
+            else:
+                yield {"type": "entryBatch", "entries": pending}
+            pending = []
+
+    for event in events:
+        if event.get("type") == "entry":
+            pending.append(event["entry"])
+        else:
+            yield from flush()
+            yield event
+    yield from flush()
 
 
 def openssl(*args):
@@ -422,8 +459,7 @@ def make_handler(state):
                 self.reply(status, result)
             else:
                 status, ack, events = state.receive(self.headers, body)
-                for event in events:
-                    emit(event)
+                emit_many(local_ui_messages(events))
                 self.reply(status, ack)
     return Handler
 

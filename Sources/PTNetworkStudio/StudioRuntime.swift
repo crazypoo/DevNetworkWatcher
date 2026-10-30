@@ -279,12 +279,7 @@ final class StudioBridgeController: ObservableObject {
             self.input = commandPipe
             let launchedRunID = UUID()
             let reader = StudioProcessReader { [weak self] message in
-                let decodedEntry: CaptureEntry? = {
-                    guard message["type"] as? String == "entry",
-                          let raw = message["entry"],
-                          let data = try? JSONSerialization.data(withJSONObject: raw) else { return nil }
-                    return try? JSONDecoder().decode(CaptureEntry.self, from: data)
-                }()
+                let decodedEntries = StudioBridgeLocalDecoder.entries(from: message)
                 // JSON serialization and a potentially 1,200-node Inspector decode
                 // run on the pipe reader, not on MainActor/SwiftUI's render path.
                 let decodedReply: StudioDiagnosticReply? = {
@@ -328,10 +323,10 @@ final class StudioBridgeController: ObservableObject {
                             now.timeIntervalSince($0.value) < 120
                         }
                         self.authenticatedSessions[sessionID] = now
-                    } else if message["type"] as? String == "entry",
-                              let entry = decodedEntry {
-                        self.receivedBridgeEntries += 1
-                        self.onEntry?(entry)
+                    } else if ["entry", "entryBatch"].contains(message["type"] as? String ?? ""),
+                              !decodedEntries.isEmpty {
+                        self.receivedBridgeEntries += decodedEntries.count
+                        for entry in decodedEntries { self.onEntry?(entry) }
                     } else if message["type"] as? String == "bridgeDelete",
                               let raw = message["requestID"] as? String,
                               let requestID = UUID(uuidString: raw) {
@@ -341,9 +336,13 @@ final class StudioBridgeController: ObservableObject {
                     } else if message["type"] as? String == "diagnosticReply",
                               let reply = decodedReply,
                               let pending = self.pendingDiagnosticDomains[reply.id],
-                              StudioDiagnosticCorrelation.accepts(requestID: reply.id,
-                                    requestSessionID: pending.sessionID, reply: reply),
-                              self.authenticatedSessions[reply.sessionID] != nil {
+                              let lastHeartbeat = self.authenticatedSessions[reply.sessionID],
+                              StudioDiagnosticCorrelation.acceptsLive(
+                                  requestID: reply.id,
+                                  requestSessionID: pending.sessionID,
+                                  createdAt: pending.created,
+                                  peerLastSeen: lastHeartbeat,
+                                  now: Date(), reply: reply) {
                         self.pendingDiagnosticDomains.removeValue(forKey: reply.id)
                         if reply.success, let message = reply.message {
                             if message.hasPrefix("fingerprint:") || message.hasPrefix("unchanged:") {
