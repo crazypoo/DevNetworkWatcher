@@ -20,6 +20,27 @@ final class StudioDiagnosticCorrelationTests: XCTestCase {
             requestID: id, requestSessionID: UUID(), reply: accepted))
     }
 
+    func testExpiredRequestAndHeartbeatCannotReviveAuthenticatedReply() {
+        let requestID = UUID(), session = UUID()
+        let response = reply(id: requestID, session: session)
+        let now = Date()
+        func check(requestAge: TimeInterval, heartbeatAge: TimeInterval,
+                   id: UUID = requestID, peer: UUID = session) -> Bool {
+            StudioDiagnosticCorrelation.acceptsLive(
+                requestID: id, requestSessionID: peer,
+                createdAt: now.addingTimeInterval(-requestAge),
+                peerLastSeen: now.addingTimeInterval(-heartbeatAge),
+                now: now, reply: response)
+        }
+        XCTAssertTrue(check(requestAge: 20, heartbeatAge: 40))
+        XCTAssertFalse(check(requestAge: 51, heartbeatAge: 40))
+        XCTAssertFalse(check(requestAge: 20, heartbeatAge: 101))
+        XCTAssertFalse(check(requestAge: -5, heartbeatAge: 40))
+        XCTAssertFalse(check(requestAge: 20, heartbeatAge: -5))
+        XCTAssertFalse(check(requestAge: 20, heartbeatAge: 40, id: UUID()))
+        XCTAssertFalse(check(requestAge: 20, heartbeatAge: 40, peer: UUID()))
+    }
+
     func testNoCrossDeviceTreeReuseOnEmptyAcknowledgement() {
         let firstSession = UUID(), secondSession = UUID()
         let entry = StudioDiagnosticEntry(
