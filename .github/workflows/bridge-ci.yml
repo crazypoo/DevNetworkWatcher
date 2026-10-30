@@ -20,6 +20,7 @@ jobs:
         run: |
           python3 -m unittest discover -v -s Tests/BackendTests
           python3 -m py_compile Sources/PTNetworkStudio/Backend/*.py
+          python3 Scripts/verify-pr50-boundaries.py
           python3 Scripts/bench-diagnostics.py > diagnostics-baseline.json
           python3 Scripts/bench_studio_matrix.py > studio-pr42-matrix-linux.json
       - uses: actions/upload-artifact@v4
@@ -42,6 +43,7 @@ jobs:
         run: |
           python3 -m unittest discover -v -s Tests/BackendTests
           python3 -m py_compile Sources/PTNetworkStudio/Backend/*.py
+          python3 Scripts/verify-pr50-boundaries.py
       - name: Diagnostic JSON processing baseline (non-gating)
         run: |
           python3 Scripts/bench-diagnostics.py > diagnostics-baseline.json

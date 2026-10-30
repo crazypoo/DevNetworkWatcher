@@ -72,6 +72,10 @@ struct StudioDiagnosticsWorkspaceView: View {
     @State private var children: [String: [String]] = [:]
     @State private var treeRows: [StudioHierarchyRow] = []
     @State private var flatRows: [StudioHierarchyRow] = []
+    @State private var filteredRows: [StudioHierarchyRow] = []
+    @State private var entryQuery = ""
+    @State private var snapshotReceivedAt: Date?
+    @State private var layoutFindings: [String: [StudioLayoutFinding]] = [:]
     @State private var collapsedIDs: Set<String> = []
     @State private var decodedPreview: NSImage?
     @State private var previewCache = NSCache<NSString, NSImage>()
@@ -106,6 +110,10 @@ struct StudioDiagnosticsWorkspaceView: View {
                     Toggle("3D", isOn: $viewing3D).toggleStyle(.switch)
                         .help("Perspective representation of captured view frames")
                 }
+                TextField("Search snapshot", text: $entryQuery)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 180)
+                    .accessibilityLabel("Filter Inspector, Console, Storage or Metrics entries")
                 Button("Refresh") {
                     previousIDs = presentIDs
                     request(domain == "storage" ? "list" : "snapshot")
@@ -122,7 +130,7 @@ struct StudioDiagnosticsWorkspaceView: View {
             } else {
                 HStack(spacing: 0) {
                     List(selection: $selectedID) {
-                        ForEach(domain == "inspector" ? treeRows : flatRows) { row in
+                        ForEach(filteredRows) { row in
                             let entry = row.entry
                             HStack {
                                 if domain == "inspector" && children[entry.id] != nil {
@@ -146,6 +154,11 @@ struct StudioDiagnosticsWorkspaceView: View {
                                     }
                                 }
                                 Spacer()
+                                if domain == "inspector", layoutFindings[entry.id] != nil {
+                                    Image(systemName: "exclamationmark.triangle")
+                                        .foregroundStyle(.orange)
+                                        .help("Read-only geometry hint; not a confirmed Auto Layout conflict")
+                                }
                                 if !previousIDs.isEmpty && !previousIDs.contains(entry.id) {
                                     Image(systemName: "plus.circle.fill").foregroundStyle(.green)
                                 }
@@ -167,6 +180,14 @@ struct StudioDiagnosticsWorkspaceView: View {
                                 perspective
                                 if let entry = selected {
                                     Text(entry.name).font(.headline)
+                                    if let findings = layoutFindings[entry.id] {
+                                        ForEach(findings.indices, id: \.self) { index in
+                                            Label(findings[index].summary, systemImage: "exclamationmark.triangle")
+                                                .font(.caption).foregroundStyle(.orange)
+                                        }
+                                        Text("Geometry is advisory; constraints are not remotely enumerated.")
+                                            .font(.caption2).foregroundStyle(.secondary)
+                                    }
                                     if let frame = entry.frame {
                                         Text("x: \(Int(frame.x)), y: \(Int(frame.y)), w: \(Int(frame.width)), h: \(Int(frame.height))")
                                             .font(.system(.caption, design: .monospaced))
@@ -222,7 +243,14 @@ struct StudioDiagnosticsWorkspaceView: View {
                 Text(lastMessage).font(.caption).foregroundStyle(.orange)
             }
             HStack {
-                Text("\(entries.count) entries")
+                Text("\(filteredRows.count) / \(entries.count) entries")
+                if let receivedAt = snapshotReceivedAt {
+                    Text("• Snapshot \(receivedAt.formatted(date: .omitted, time: .standard))")
+                }
+                if domain == "inspector", !layoutFindings.isEmpty {
+                    Text("• \(layoutFindings.count) geometry hints")
+                        .foregroundStyle(.orange)
+                }
                 if !previousIDs.isEmpty {
                     Text("• \(presentIDs.subtracting(previousIDs).count) added, \(previousIDs.subtracting(presentIDs).count) removed")
                 }
@@ -234,6 +262,7 @@ struct StudioDiagnosticsWorkspaceView: View {
         .onAppear { applyDiagnosticReply() }
         .onChange(of: bridge.diagnosticRevision) { _ in applyDiagnosticReply() }
         .onChange(of: selectedID) { _ in updatePreview() }
+        .onChange(of: entryQuery) { _ in refreshFilteredRows() }
         .onChange(of: storageArea) { _ in resetDomainState(); applyDiagnosticReply() }
         .onChange(of: domain) { _ in resetDomainState(); applyDiagnosticReply() }
     }
@@ -266,6 +295,10 @@ struct StudioDiagnosticsWorkspaceView: View {
         children = [:]
         treeRows = []
         flatRows = []
+        filteredRows = []
+        entryQuery = ""
+        snapshotReceivedAt = nil
+        layoutFindings = [:]
         perspectiveEntries = []
         lastIndexedReplyID = nil
         lastIndexedFingerprint = nil
@@ -287,6 +320,7 @@ struct StudioDiagnosticsWorkspaceView: View {
         }
         lastIndexedSessionID = data.sessionID
         lastIndexedReplyID = data.id
+        snapshotReceivedAt = Date()
         lastMessage = data.success ? nil : (data.message ?? "Diagnostic command rejected")
         let message = data.message ?? ""
         if message.hasPrefix("unchanged:") ||
@@ -313,6 +347,7 @@ struct StudioDiagnosticsWorkspaceView: View {
         perspectiveEntries = projection.perspectiveEntries
         indexedEntries = projection.indexedEntries
         children = projection.children
+        layoutFindings = domain == "inspector" ? StudioLayoutAudit.analyze(entries) : [:]
         collapsedIDs = collapsedIDs.intersection(Set(indexedEntries.keys))
         rebuildVisibleRows()
         updatePreview()
@@ -322,6 +357,12 @@ struct StudioDiagnosticsWorkspaceView: View {
         treeRows = StudioHierarchyProjection.visibleRows(
             entries: entries, indexed: indexedEntries,
             children: children, collapsed: collapsedIDs)
+        refreshFilteredRows()
+    }
+
+    private func refreshFilteredRows() {
+        filteredRows = StudioDiagnosticSearch.filter(
+            domain == "inspector" ? treeRows : flatRows, query: entryQuery)
     }
 
     private func updatePreview() {
