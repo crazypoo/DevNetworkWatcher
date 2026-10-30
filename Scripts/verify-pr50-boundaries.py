@@ -19,6 +19,7 @@ expected = {
     r"\benum\s+StudioLayoutAudit\b": ["StudioLayoutAudit.swift"],
     r"\benum\s+StudioDiagnosticSearch\b": ["StudioDiagnosticSearch.swift"],
     r"\benum\s+StudioDiagnosticSessionCorrelation\b": ["StudioDiagnosticSessionCorrelation.swift"],
+    r"\benum\s+StudioBridgeLocalDecoder\b": ["StudioBridgeLocalDecoder.swift"],
 }
 for pattern, correct in expected.items():
     actual = owners(pattern)
@@ -29,6 +30,9 @@ assert "filterWorker?.cancel()" in swift["StudioContentView.swift"]
 assert "StudioLayoutAudit.analyze(entries)" in swift["StudioDiagnostics.swift"]
 assert "StudioDiagnosticSearch.filter(" in swift["StudioDiagnostics.swift"]
 assert "StudioDiagnosticSessionCorrelation.relatedSnapshots(" in swift["StudioDiagnostics.swift"]
+assert "StudioBridgeLocalDecoder.entries(from: message)" in swift["StudioRuntime.swift"]
+assert "maximumBatchSize = 24" in swift["StudioBridgeLocalDecoder.swift"]
+assert "acceptsLive(" in swift["StudioRuntime.swift"]
 assert "reply.sessionID == sessionID" in swift["StudioDiagnosticSessionCorrelation.swift"]
 assert "diagnosticSearch" in swift["StudioWorkspaceView.swift"]
 
