@@ -7,9 +7,7 @@ private struct HostCount: Identifiable {
     var id: String { name }
 }
 
-private enum Scope: Hashable {
-    case all, http, https, failed, host(String)
-}
+private typealias Scope = StudioFlowScope
 
 @MainActor
 struct StudioContentView: View {
@@ -20,6 +18,8 @@ struct StudioContentView: View {
     @State private var appliedSearch = ""
     @State private var visibleEntries: [CaptureEntry] = []
     @State private var searchTask: Task<Void, Never>?
+    @State private var filterTask: Task<Void, Never>?
+    @State private var filterRevision: UInt64 = 0
     @State private var port = "9090"
     @State private var showComposer = false
     @State private var inspectorTab = 0
@@ -45,18 +45,31 @@ struct StudioContentView: View {
     private var filteredEntries: [CaptureEntry] { visibleEntries }
 
     private func refreshVisibleEntries(from snapshot: [CaptureEntry]? = nil) {
-        visibleEntries = (snapshot ?? store.entries).filter { item in
-            let scopeMatches: Bool
-            switch scope {
-            case .all: scopeMatches = true
-            case .http: scopeMatches = !item.isTunnel && item.url.hasPrefix("http://")
-            case .https: scopeMatches = item.isTunnel || item.url.hasPrefix("https://")
-            case .failed: scopeMatches = item.error != nil || (item.status ?? 0) >= 400
-            case .host(let host): scopeMatches = item.host == host
-            }
-            let textMatches = appliedSearch.isEmpty || [item.url, item.method, item.host, item.statusText].contains { $0.localizedCaseInsensitiveContains(appliedSearch) }
-            return scopeMatches && textMatches
-        }.reversed()
+        let source = snapshot ?? store.entries
+        let selectedScope = scope
+        let searchValue = appliedSearch
+        filterRevision &+= 1
+        let revision = filterRevision
+        filterTask?.cancel()
+        // Avoid scheduling overhead for small sets and initial empty results.
+        if source.count < 300 {
+            visibleEntries = StudioFlowProjection.filter(
+                entries: source, scope: selectedScope, search: searchValue)
+            filterTask = nil
+            return
+        }
+        // The 75 ms CaptureStore publish buffer already batches traffic.
+        // Filter larger immutable Sendable snapshots off MainActor and discard
+        // older results after scope/search/reset changes.
+        filterTask = Task(priority: .userInitiated) {
+            let rows = await Task.detached(priority: .userInitiated) {
+                StudioFlowProjection.filter(
+                    entries: source, scope: selectedScope, search: searchValue)
+            }.value
+            guard !Task.isCancelled, revision == filterRevision else { return }
+            visibleEntries = rows
+            filterTask = nil
+        }
     }
 
     private var selectedEntry: CaptureEntry? { store.entry(id: selectedID) }
@@ -86,7 +99,10 @@ struct StudioContentView: View {
                 refreshVisibleEntries()
             }
         }
-        .onDisappear { searchTask?.cancel(); searchTask = nil }
+        .onDisappear {
+            searchTask?.cancel(); searchTask = nil
+            filterTask?.cancel(); filterTask = nil
+        }
         .toolbar {
             ToolbarItemGroup(placement: .navigation) {
                 HStack(spacing: 8) {
