@@ -41,6 +41,22 @@ struct StudioDiagnosticReply: Decodable, Sendable {
     let entries: [StudioDiagnosticEntry]
 }
 
+/// Pure correlation rules shared by the transport and XCTest. An authenticated
+/// peer alone is not enough: each request is bound to a specific iPhone session.
+enum StudioDiagnosticCorrelation {
+    static func accepts(requestID: UUID, requestSessionID: UUID,
+                        reply: StudioDiagnosticReply) -> Bool {
+        reply.schemaVersion == 2 &&
+        reply.id == requestID &&
+        reply.sessionID == requestSessionID
+    }
+
+    static func mayReuseEntries(previous: StudioDiagnosticReply,
+                                reply: StudioDiagnosticReply) -> Bool {
+        reply.entries.isEmpty && previous.sessionID == reply.sessionID
+    }
+}
+
 /// Calculated on refresh instead of rebuilding the parent dictionary for every SwiftUI row.
 private struct StudioHierarchyRow: Identifiable {
     let entry: StudioDiagnosticEntry
