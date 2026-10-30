@@ -91,6 +91,32 @@ class DiagnosticsTests(unittest.TestCase):
         self.assertIsNone(event)
         self.assertIn(str(uuid.UUID(cmd["id"])), state.diagnostics.pending)
 
+    def test_revoked_peer_cannot_consume_other_peers_command(self):
+        token = "q" * 32
+        alice = str(uuid.uuid4())
+        bob = str(uuid.uuid4())
+        state = CollectorState(token)
+        state.sessions[alice] = {"last": 1, "ids": {}}
+        state.sessions[bob] = {"last": 1, "ids": {}}
+        cmd_a = make_command(alice)
+        cmd_b = make_command(bob)
+        self.assertTrue(state.diagnostics.enqueue(cmd_a, state.sessions))
+        self.assertTrue(state.diagnostics.enqueue(cmd_b, state.sessions))
+        del state.sessions[alice]
+        revoked_reply = {"schemaVersion": 2, "id": cmd_a["id"],
+                         "sessionID": alice, "success": True, "entries": []}
+        active_reply = {"schemaVersion": 2, "id": cmd_b["id"],
+                        "sessionID": bob, "success": True, "entries": []}
+        status_a, _, _ = state.diagnostic_request(
+            make_headers(token), "/v2/diagnostics/reply", json.dumps(revoked_reply).encode())
+        status_b, _, returned = state.diagnostic_request(
+            make_headers(token), "/v2/diagnostics/reply", json.dumps(active_reply).encode())
+        self.assertEqual(status_a, 403)
+        self.assertEqual(status_b, 200)
+        self.assertEqual(returned["sessionID"], bob)
+        self.assertIsNone(state.diagnostics.accept_reply(active_reply))
+        self.assertIn(str(uuid.UUID(cmd_a["id"])), state.diagnostics.pending)
+
     def test_reply_redacts_sensitive_attributes_and_bounds(self):
         sid = str(uuid.uuid4())
         reply = {"schemaVersion": 2, "id": str(uuid.uuid4()),
