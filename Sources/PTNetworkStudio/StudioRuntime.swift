@@ -341,7 +341,8 @@ final class StudioBridgeController: ObservableObject {
                     } else if message["type"] as? String == "diagnosticReply",
                               let reply = decodedReply,
                               let pending = self.pendingDiagnosticDomains.removeValue(forKey: reply.id),
-                              pending.sessionID == reply.sessionID,
+                              StudioDiagnosticCorrelation.accepts(requestID: reply.id,
+                                    requestSessionID: pending.sessionID, reply: reply),
                               self.authenticatedSessions[reply.sessionID] != nil {
                         if reply.success, let message = reply.message {
                             if message.hasPrefix("fingerprint:") || message.hasPrefix("unchanged:") {
@@ -351,9 +352,8 @@ final class StudioBridgeController: ObservableObject {
                         }
                         // Highlight/edit/undo and unchanged snapshots contain no new tree.
                         // Preserve the previous snapshot until the user selects Refresh.
-                        if reply.entries.isEmpty,
-                           let previous = self.diagnosticResults[pending.domain],
-                           previous.sessionID == reply.sessionID {
+                        if let previous = self.diagnosticResults[pending.domain],
+                           StudioDiagnosticCorrelation.mayReuseEntries(previous: previous, reply: reply) {
                             self.diagnosticResults[pending.domain] = StudioDiagnosticReply(
                                 schemaVersion: reply.schemaVersion, id: reply.id,
                                 sessionID: reply.sessionID, success: reply.success,
