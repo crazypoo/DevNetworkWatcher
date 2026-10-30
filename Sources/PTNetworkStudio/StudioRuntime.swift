@@ -279,27 +279,7 @@ final class StudioBridgeController: ObservableObject {
             self.input = commandPipe
             let launchedRunID = UUID()
             let reader = StudioProcessReader { [weak self] message in
-                let decodedEntries: [CaptureEntry] = {
-                    switch message["type"] as? String {
-                    case "entry":
-                        guard let raw = message["entry"],
-                              let data = try? JSONSerialization.data(withJSONObject: raw),
-                              let entry = try? JSONDecoder().decode(CaptureEntry.self, from: data)
-                        else { return [] }
-                        return [entry]
-                    case "entryBatch":
-                        // Local collector IPC only; the network v1 schema is untouched.
-                        // Keep batches bounded before allocating/decoding.
-                        guard let raw = message["entries"] as? [[String: Any]],
-                              !raw.isEmpty, raw.count <= 24,
-                              let data = try? JSONSerialization.data(withJSONObject: raw),
-                              let entries = try? JSONDecoder().decode([CaptureEntry].self, from: data)
-                        else { return [] }
-                        return entries
-                    default:
-                        return []
-                    }
-                }()
+                let decodedEntries = StudioBridgeLocalDecoder.entries(from: message)
                 // JSON serialization and a potentially 1,200-node Inspector decode
                 // run on the pipe reader, not on MainActor/SwiftUI's render path.
                 let decodedReply: StudioDiagnosticReply? = {
