@@ -21,11 +21,14 @@ jobs:
           python3 -m unittest discover -v -s Tests/BackendTests
           python3 -m py_compile Sources/PTNetworkStudio/Backend/*.py
           python3 Scripts/bench-diagnostics.py > diagnostics-baseline.json
+          python3 Scripts/bench_studio_matrix.py > studio-pr42-matrix-linux.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: studio-backend-diagnostics-linux
-          path: diagnostics-baseline.json
+          path: |
+            diagnostics-baseline.json
+            studio-pr42-matrix-linux.json
           if-no-files-found: ignore
           retention-days: 14
 
@@ -42,11 +45,15 @@ jobs:
       - name: Diagnostic JSON processing baseline (non-gating)
         run: |
           python3 Scripts/bench-diagnostics.py > diagnostics-baseline.json
+          python3 Scripts/bench_studio_matrix.py > studio-pr42-matrix-macos.json
           cat diagnostics-baseline.json
+          cat studio-pr42-matrix-macos.json
       - uses: actions/upload-artifact@v4
         with:
           name: studio-diagnostics-benchmark
-          path: diagnostics-baseline.json
+          path: |
+            diagnostics-baseline.json
+            studio-pr42-matrix-macos.json
           retention-days: 14
       - name: Native macOS SwiftPM build and tests
         run: |
