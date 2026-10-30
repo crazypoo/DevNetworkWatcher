@@ -3,6 +3,7 @@ set -eu
 cd "$(dirname "$0")/.."
 python3 -m unittest discover -v -s Tests/BackendTests
 python3 -m py_compile Sources/PTNetworkStudio/Backend/*.py
+python3 Scripts/verify-pr50-boundaries.py
 swift package dump-package >/dev/null
 swiftc -frontend -parse Sources/PTNetworkStudio/*.swift
 python3 Scripts/audit-swift-source.py
