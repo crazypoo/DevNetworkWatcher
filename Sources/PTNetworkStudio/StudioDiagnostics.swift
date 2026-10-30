@@ -74,6 +74,7 @@ struct StudioDiagnosticsWorkspaceView: View {
     @State private var flatRows: [StudioHierarchyRow] = []
     @State private var filteredRows: [StudioHierarchyRow] = []
     @State private var entryQuery = ""
+    @State private var snapshotReceivedAt: Date?
     @State private var layoutFindings: [String: [StudioLayoutFinding]] = [:]
     @State private var collapsedIDs: Set<String> = []
     @State private var decodedPreview: NSImage?
@@ -243,6 +244,9 @@ struct StudioDiagnosticsWorkspaceView: View {
             }
             HStack {
                 Text("\(filteredRows.count) / \(entries.count) entries")
+                if let receivedAt = snapshotReceivedAt {
+                    Text("• Snapshot \(receivedAt.formatted(date: .omitted, time: .standard))")
+                }
                 if domain == "inspector", !layoutFindings.isEmpty {
                     Text("• \(layoutFindings.count) geometry hints")
                         .foregroundStyle(.orange)
@@ -293,6 +297,7 @@ struct StudioDiagnosticsWorkspaceView: View {
         flatRows = []
         filteredRows = []
         entryQuery = ""
+        snapshotReceivedAt = nil
         layoutFindings = [:]
         perspectiveEntries = []
         lastIndexedReplyID = nil
@@ -315,6 +320,7 @@ struct StudioDiagnosticsWorkspaceView: View {
         }
         lastIndexedSessionID = data.sessionID
         lastIndexedReplyID = data.id
+        snapshotReceivedAt = Date()
         lastMessage = data.success ? nil : (data.message ?? "Diagnostic command rejected")
         let message = data.message ?? ""
         if message.hasPrefix("unchanged:") ||
