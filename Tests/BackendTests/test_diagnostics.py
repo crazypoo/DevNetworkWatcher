@@ -48,6 +48,29 @@ class DiagnosticsTests(unittest.TestCase):
         self.assertIsNotNone(broker.accept_reply(reply))
         self.assertIsNone(broker.accept_reply(reply))
 
+    def test_two_authenticated_devices_never_consume_each_others_pending_reply(self):
+        broker = DiagnosticsBroker()
+        alice = str(uuid.uuid4())
+        bob = str(uuid.uuid4())
+        command_a = make_command(alice)
+        command_b = make_command(bob)
+        authenticated = {alice: {}, bob: {}}
+        self.assertTrue(broker.enqueue(command_a, authenticated))
+        self.assertTrue(broker.enqueue(command_b, authenticated))
+        self.assertEqual(len(broker.poll(alice, authenticated)["commands"]), 1)
+        self.assertEqual(len(broker.poll(bob, authenticated)["commands"]), 1)
+
+        # Device B cannot acknowledge device A's request ID, and the invalid
+        # response must not consume A's pending command.
+        wrong = {"schemaVersion": 2, "id": command_a["id"],
+                 "sessionID": bob, "success": True, "entries": []}
+        self.assertIsNone(broker.accept_reply(wrong))
+        valid_a = dict(wrong, sessionID=alice)
+        self.assertEqual(broker.accept_reply(valid_a)["sessionID"], alice)
+        self.assertIsNone(broker.accept_reply(valid_a))
+        valid_b = dict(wrong, id=command_b["id"])
+        self.assertEqual(broker.accept_reply(valid_b)["sessionID"], bob)
+
     def test_reply_redacts_sensitive_attributes_and_bounds(self):
         sid = str(uuid.uuid4())
         reply = {"schemaVersion": 2, "id": str(uuid.uuid4()),
