@@ -20,6 +20,9 @@ contract, the Diagnostics v2 command/reply shape, TLS pinning, or pairing.
   switches, never UserDefaults. Shortcuts show only sanitized snapshots
   whose ephemeral session UUID equals the current snapshot session. This
   does not correlate by token, device name, IP or persistent device ID.
+  The Network shortcut exposes the aggregate capture table **across all sources**:
+  schema v1 flows do not carry v2 session IDs, so they are deliberately not
+  labeled as belonging to the selected diagnostic session.
 - **PR54:** Existing `Scripts/verify-pr50-boundaries.py` checks that there is
   one session-correlation owner and that the same-session condition
   remains. No new recorder or TCP listener was added.
